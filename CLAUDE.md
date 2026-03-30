@@ -106,6 +106,43 @@ Re-read this section at the start of every task.
 14. Run tests after EVERY code change — `uv run python manage.py test`
 15. Frontend: Django templates + vanilla JS — NEVER React/Vue/Angular
 
+## Post-Implementation Rule
+
+<system-reminder>
+After ANY code generation or modification — whether from /sc:implement, a subagent, or manual coding — you MUST run these commands before moving to the next task:
+1. black . && ruff check . --fix
+2. uv run python manage.py test
+Do NOT defer testing to a separate /sc:test invocation. Test immediately.
+</system-reminder>
+
+## Testing Rules
+
+<system-reminder>
+django-tenants requires PostgreSQL for tests — SQLite will NOT work.
+Use the correct test case base class for each app type.
+</system-reminder>
+
+- **Shared app tests** (tenants, users): use `django.test.TestCase`
+- **Tenant app tests** (workflows, documents, dashboard): MUST use `django_tenants.test.cases.TenantTestCase`
+- **TenantTestCase** auto-creates a test tenant + schema. Do NOT manually create schemas in tests.
+- Run specific app: `uv run python manage.py test apps.<app_name>`
+- Run all: `uv run python manage.py test`
+- Coverage: `uv run coverage run manage.py test && uv run coverage report`
+
+## Tenant Provisioning Flow
+
+```text
+1. User calls POST /api/tenants/ with {name, subdomain}
+2. services.provision_tenant():
+   a. Validate subdomain (not reserved: public, pg_*, information_schema)
+   b. Create Tenant(schema_name=subdomain, name=name) → auto_create_schema runs CREATE SCHEMA
+   c. Create Domain(domain="{subdomain}.localhost", tenant=tenant, is_primary=True)
+   d. tenant.add_user(request.user) → adds creator to tenant membership
+   e. TenantMembership.objects.create(user=request.user, tenant=tenant, role="admin")
+3. Return tenant details
+4. User accesses {subdomain}.localhost → TenantMainMiddleware resolves → schema set
+```
+
 ## Access Patterns
 
 ### Database (tenant-aware)
