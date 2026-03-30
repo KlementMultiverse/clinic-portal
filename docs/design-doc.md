@@ -204,7 +204,7 @@ Will implement tests using `django_tenants.test.cases.TenantTestCase` with a rea
 
 ### 4.1 Core Components
 
-```
+```text
 Request Flow:
   Browser (clinic1.localhost:8000)
     -> TenantMainMiddleware (resolves domain -> tenant, sets search_path to "clinic1")
@@ -283,12 +283,21 @@ from tenant_users.tenants.models import UserProfile
 
 class User(UserProfile):
     name = models.CharField(max_length=150)
+    # Inherits from UserProfile: email (username field), is_active, tenant membership
+    # NOTE: role is NOT on User — it is per-tenant via TenantMembership below
+
+class TenantMembership(models.Model):
+    """Per-tenant role assignment. A user can be admin in one clinic and staff in another."""
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="memberships")
+    tenant = models.ForeignKey("tenants.Tenant", on_delete=models.CASCADE, related_name="memberships")
     role = models.CharField(
         max_length=20,
         choices=[("admin", "Admin"), ("staff", "Staff")],
         default="staff",
     )
-    # Inherits from UserProfile: email (username field), is_active, tenant membership
+
+    class Meta:
+        unique_together = ("user", "tenant")
 ```
 
 **Workflow (tenant schema)**
@@ -321,7 +330,7 @@ class Task(models.Model):
         "cancelled": [],       # Terminal
     }
 
-    workflow = models.ForeignKey(Workflow, on_delete=models.CASCADE, related_name="tasks")
+    workflow = models.ForeignKey(Workflow, on_delete=models.PROTECT, related_name="tasks")
     title = models.CharField(max_length=300)
     description = models.TextField(blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="created")
@@ -383,7 +392,7 @@ class Document(models.Model):
 
 **Auth Flow:**
 
-```
+```text
 1. POST /api/auth/register  -> User.objects.create_user() in shared schema
 2. POST /api/auth/login     -> authenticate() + login() -> session stored in Redis
 3. All subsequent requests   -> sessionid cookie -> Redis lookup -> request.user
@@ -392,7 +401,7 @@ class Document(models.Model):
 
 **Tenant Provisioning Flow:**
 
-```
+```text
 1. POST /api/tenants/ with {name, subdomain}
 2. services.provision_tenant():
    a. Create Tenant(schema_name=subdomain, name=name) -> auto_create_schema runs CREATE SCHEMA
@@ -404,7 +413,7 @@ class Document(models.Model):
 
 **S3 Upload Flow (presigned POST):**
 
-```
+```text
 1. Frontend: POST /api/documents/upload-url {filename, content_type}
 2. Backend: generate s3_key = "{schema}/{uuid4}/{sanitized_filename}"
 3. Backend: s3_client.generate_presigned_post(
@@ -425,7 +434,7 @@ class Document(models.Model):
 
 **S3 Download Flow:**
 
-```
+```text
 1. Frontend: GET /api/documents/{id}/download-url
 2. Backend: s3_client.generate_presigned_url("get_object", Bucket=bucket, Key=doc.s3_key, ExpiresIn=900)
 3. Backend returns: {url}
@@ -434,7 +443,7 @@ class Document(models.Model):
 
 **S3 Deletion Flow (synchronous with rollback):**
 
-```
+```text
 1. DELETE /api/documents/{id}
 2. Validate: user is admin OR user is the original uploader (uploaded_by)
 3. Attempt s3_client.delete_object(Bucket=bucket, Key=doc.s3_key)
@@ -445,7 +454,7 @@ class Document(models.Model):
 
 **Lambda Invocation Flow:**
 
-```
+```text
 Summarize Document:
 1. POST /api/documents/{id}/summarize
 2. Frontend sends document text in request body
@@ -629,8 +638,8 @@ Applied to this project's specific mutation and integration points:
 | # | What to Log | Level | Where | Example Message |
 |---|------------|-------|-------|-----------------|
 | 1 | Every API request | INFO | Middleware or Django Ninja exception handler | `INFO request: POST /api/workflows/ user=5 tenant=sunrise_clinic` |
-| 2 | Auth events (login, logout, register) | INFO | `apps/users/api.py` | `INFO auth.login: user=5 email=admin@clinic.com` |
-| 3 | Auth failures (bad password, no session) | WARNING | `apps/users/api.py` | `WARNING auth.login_failed: email=admin@clinic.com reason=invalid_password` |
+| 2 | Auth events (login, logout, register) | INFO | `apps/users/api.py` | `INFO auth.login: user_id=5` |
+| 3 | Auth failures (bad password, no session) | WARNING | `apps/users/api.py` | `WARNING auth.login_failed: reason=invalid_password ip=<request_ip>` |
 | 4 | Tenant provisioning | INFO | `apps/tenants/services.py` | `INFO tenant.created: schema=sunrise_clinic name=Sunrise Clinic owner=5` |
 | 5 | State machine transitions | INFO | `apps/workflows/task_services.py` | `INFO task.transition: task=12 created->assigned user=5 tenant=sunrise_clinic` |
 | 6 | Invalid transition attempts | WARNING | `apps/workflows/task_services.py` | `WARNING task.invalid_transition: task=12 completed->in_progress user=5` |
@@ -718,8 +727,9 @@ LOGGING = {
 |---------|---------|
 | black | Code formatter (line-length 100) |
 | ruff | Linter (rules E, F, I, UP, B) |
-| pytest | Test runner (via Django's test command) |
-| pytest-django | Django test integration |
+| pytest | Test runner |
+| pytest-django | Django test integration (requires `DJANGO_SETTINGS_MODULE` in `pyproject.toml [tool.pytest.ini_options]`) |
+| django-tenants test utils | `TenantTestCase` for schema-isolated tests (built into django-tenants) |
 
 ### Docker Images
 
@@ -796,7 +806,7 @@ LOGGING = {
 - AuditLog is append-only: no update or delete endpoints exist.
 - `entity_id` is an IntegerField (not a FK) so audit entries survive entity deletion.
 - `performed_by` uses `SET_NULL` on delete so audit entries survive user deletion.
-- Logged actions: `created`, `updated`, `deleted`, `status_change:{old}->{new}`, `assigned:{user_id}`, `invited:{email}`, `removed:{user_id}`, `uploaded`, `summarized`.
+- Logged actions: `created`, `updated`, `deleted`, `status_change:{old}->{new}`, `assigned:{user_id}`, `invited:{user_id}`, `removed:{user_id}`, `uploaded`, `summarized`.
 
 ### CORS
 
