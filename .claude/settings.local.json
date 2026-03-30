@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker compose *)",
+      "Bash(docker-compose *)",
+      "Bash(uv *)",
+      "Bash(uv run *)",
+      "Bash(python manage.py *)",
+      "Bash(uv run python manage.py *)",
+      "Bash(black *)",
+      "Bash(ruff *)",
+      "Bash(pytest *)",
+      "Bash(git *)",
+      "Bash(gh *)",
+      "Bash(aws *)",
+      "Bash(mkdir *)",
+      "Bash(chmod *)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(echo *)",
+      "Bash(cd *)",
+      "Bash(pre-commit *)",
+      "Read(*)",
+      "Skill(specify)",
+      "Skill(design-doc)",
+      "Skill(plan-tasks)",
+      "Skill(audit-patterns)",
+      "Skill(retro)",
+      "Skill(gate)",
+      "Skill(sc:*)",
+      "Skill(implement-task)",
+      "Skill(setup-precommit)"
+    ]
+  }
+}
