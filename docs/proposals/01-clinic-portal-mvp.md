@@ -16,7 +16,7 @@ This project builds a multi-tenant SaaS portal where each clinic gets an isolate
 
 [NEEDS CLARIFICATION]: How is a superadmin distinguished from a tenant admin? Assumed: Django `is_superuser=True` flag.
 [NEEDS CLARIFICATION]: Does clinic signup create both Tenant and first admin User atomically? Assumed: yes, single-step.
-[NEEDS CLARIFICATION]: What does "invite staff" mean without email? Assumed: admin creates account directly with credentials.
+[NEEDS CLARIFICATION]: What does "invite staff" mean? SPEC.md says "Add a user to this tenant (by email)" but also excludes email/SMS notifications. Assumed: "by email" means the admin identifies the user by email address and creates their account directly (no invitation email sent). This aligns with the no-email constraint.
 
 ## User Stories
 
