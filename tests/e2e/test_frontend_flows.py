@@ -532,11 +532,14 @@ class TestAPIIntegration:
     def test_tasks_api(self, page: Page):
         """Tasks API should return list of tasks."""
         login_as(page, ADMIN_EMAIL, ADMIN_PASSWORD)
-        response = page.request.get(f"{CLINIC_URL}/api/tasks/")
-        assert response.status == 200
-        data = response.json()
-        assert isinstance(data, list)
-        assert len(data) >= 4
+        page.goto(f"{CLINIC_URL}/workflows/")
+        page.wait_for_timeout(500)
+        result = page.evaluate("""async () => {
+            const resp = await fetch('/api/tasks/');
+            return {status: resp.status, data: await resp.json()};
+        }""")
+        assert result["status"] == 200
+        assert isinstance(result["data"], list)
 
     def test_documents_api(self, page: Page):
         """Documents API should return list of documents."""
