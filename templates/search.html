@@ -5,13 +5,16 @@
 <h2>Clinical QA Search</h2>
 <p>Search clinical trials and research papers from ClinicalTrials.gov and PubMed.</p>
 
-<form id="search-form" style="display:flex; gap:.5rem; margin-bottom:1rem;">
-    <input type="text" id="search-input" placeholder="e.g. SGLT2 inhibitors heart failure, metformin diabetes..."
-           style="flex:1;" required>
-    <button type="submit" id="search-btn">Search</button>
-    <label style="display:flex; align-items:center; gap:.3rem; font-size:.85rem; white-space:nowrap;">
-        <input type="checkbox" id="fresh-check" style="width:auto; margin:0;"> Fresh
-    </label>
+<form id="search-form">
+    <div style="display:flex; gap:.5rem; align-items:center;">
+        <input type="text" id="search-input"
+               placeholder="Search clinical trials and papers... (e.g. SGLT2 inhibitors, metformin diabetes)"
+               style="flex:1; margin-bottom:0;" required>
+        <button type="submit" id="search-btn" style="margin-bottom:0; white-space:nowrap;">Search</button>
+        <label style="display:flex; align-items:center; gap:.3rem; font-size:.85rem; white-space:nowrap; margin-bottom:0;">
+            <input type="checkbox" id="fresh-check" role="switch" style="width:auto; margin:0;"> Fresh
+        </label>
+    </div>
 </form>
 
 <!-- AI Summary -->
