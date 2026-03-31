@@ -6,7 +6,7 @@ from ninja import Router, Schema
 from ninja.security import django_auth
 
 from apps.search.models import SearchHistory
-from apps.search.services import run_search, summarize_search_results
+from apps.search.services import rewrite_query, run_search, summarize_search_results
 from apps.workflows.models import AuditLog
 
 logger = logging.getLogger(__name__)
@@ -19,6 +19,7 @@ MAX_HISTORY = 20
 
 class SearchIn(Schema):
     query: str
+    fresh: bool = False  # If True, bypass cache and fetch fresh results
 
 
 class TrialOut(Schema):
@@ -41,6 +42,7 @@ class SearchOut(Schema):
     trials: list[TrialOut]
     papers: list[PaperOut]
     search_id: int
+    rewritten_query: str = ""  # The optimized query used for search
 
 
 class SearchHistoryOut(Schema):
@@ -67,22 +69,38 @@ def search(request: HttpRequest, data: SearchIn):
     if len(query) > MAX_QUERY_LENGTH:
         query = query[:MAX_QUERY_LENGTH]
 
+    # Clear cache if fresh requested
+    if data.fresh:
+        from django.core.cache import cache as _cache
+
+        q_hash = __import__("hashlib").md5(query.encode()).hexdigest()[:12]
+        _cache.delete(f"search:trials:{q_hash}")
+        _cache.delete(f"search:papers:{q_hash}")
+        logger.info("Fresh search requested — cache cleared for query=%s", query[:50])
+
+    # Query rewriting — expand abbreviations and add synonyms
+    try:
+        search_query = rewrite_query(query)
+    except Exception:
+        search_query = query
+
     logger.info(
-        "Clinical search: query='%s' by user=%s",
+        "Clinical search: original='%s' rewritten='%s' by user=%s",
         query[:50],
+        search_query[:50],
         request.user.email,
     )
 
     # Fetch from both APIs in parallel
     try:
-        trials, papers = run_search(query)
+        trials, papers = run_search(search_query)
     except Exception as exc:
         logger.error("Search failed: %s", exc, exc_info=True)
         trials, papers = [], []
 
     logger.info("Search results: %d trials, %d papers", len(trials), len(papers))
 
-    # Summarize with AI
+    # Summarize with AI (use original query for relevance)
     try:
         summary = summarize_search_results(query, trials, papers)
     except Exception as exc:
@@ -122,6 +140,7 @@ def search(request: HttpRequest, data: SearchIn):
         "trials": trials,
         "papers": papers,
         "search_id": record.id,
+        "rewritten_query": search_query if search_query != query else "",
     }
 
 

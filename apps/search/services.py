@@ -33,6 +33,80 @@ def _sanitize_query(query: str) -> str:
     return query
 
 
+def rewrite_query(raw_query: str) -> str:
+    """Rewrite a natural language query into optimized search terms.
+
+    Uses Claude Haiku to expand abbreviations and add medical synonyms.
+    Falls back to raw query if LLM is unavailable.
+    """
+    raw_query = raw_query.strip()
+    if not raw_query or len(raw_query) < 5:
+        return raw_query
+
+    # Check cache
+    cache_key = f"search:rewrite:{hashlib.md5(raw_query.encode()).hexdigest()[:12]}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return raw_query
+
+    prompt = (
+        "Rewrite this clinical search query into optimized PubMed/ClinicalTrials "
+        "search terms. Expand abbreviations, add MeSH-style synonyms.\n\n"
+        "Rules:\n"
+        "- Return ONLY the rewritten query, nothing else\n"
+        "- Keep it under 15 words\n"
+        "- Expand common abbreviations (T2DM→type 2 diabetes, "
+        "NSCLC→non-small cell lung cancer, HF→heart failure)\n"
+        "- Add key synonyms separated by OR if helpful\n"
+        "- Do NOT add quotes or special operators\n\n"
+        "Examples:\n"
+        "Input: T2DM metformin outcomes\n"
+        "Output: type 2 diabetes mellitus metformin treatment outcomes\n\n"
+        "Input: HbA1c lowering drugs\n"
+        "Output: glycated hemoglobin HbA1c reducing medications\n\n"
+        "Input: NSCLC immunotherapy PD-1\n"
+        "Output: non-small cell lung cancer immunotherapy PD-1 checkpoint inhibitor\n\n"
+        f"Input: {raw_query}\nOutput:"
+    )
+
+    model = os.environ.get("LLM_MODEL", "claude-haiku-4-5-20251001")
+    payload = {
+        "model": model,
+        "max_tokens": 50,
+        "temperature": 0.0,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+            rewritten = body["content"][0]["text"].strip()
+    except Exception as exc:
+        logger.warning("Query rewrite failed: %s — using original", exc)
+        return raw_query
+
+    rewritten = strip_tags(rewritten)[:MAX_QUERY_LENGTH]
+    if not rewritten:
+        return raw_query
+
+    logger.info("Query rewritten: '%s' → '%s'", raw_query[:50], rewritten[:50])
+    cache.set(cache_key, rewritten, 86400)  # Cache for 24hr
+    return rewritten
+
+
 async def _fetch_clinical_trials(query: str) -> list[dict]:
     """Fetch clinical trials from clinicaltrials.gov v2 API."""
     query = _sanitize_query(query)
