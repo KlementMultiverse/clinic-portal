@@ -2,7 +2,14 @@ from django.contrib import admin
 from django.urls import path
 
 from apps.users.api import api
-from config.views import dashboard, documents, login_view, register_view, staff, workflows
+from config.views import (
+    dashboard,
+    documents,
+    login_view,
+    register_view,
+    staff,
+    workflows,
+)
 
 urlpatterns = [
     path("admin/", admin.site.urls),

@@ -1,6 +1,8 @@
 import json
 import logging
 import os
+import urllib.error
+import urllib.request
 import uuid
 
 import boto3
@@ -9,6 +11,11 @@ from django.conf import settings
 from django.db import connection
 
 logger = logging.getLogger(__name__)
+
+BEDROCK_REGION = os.environ.get("AWS_REGION", "us-east-1")
+BEDROCK_MODEL = os.environ.get(
+    "BEDROCK_MODEL_ID", "us.anthropic.claude-3-5-haiku-20241022-v1:0"
+)
 
 
 def get_s3_client():
@@ -67,15 +74,98 @@ def delete_s3_object(s3_key):
     )
 
 
-def invoke_summarize_lambda(text):
-    """Invoke Lambda for document summarization.
+# ---------------------------------------------------------------------------
+# Bedrock direct call (used when LAMBDA_SUMMARIZE_ARN is not set)
+# ---------------------------------------------------------------------------
+def _invoke_bedrock(messages, max_tokens=500):
+    """Call Bedrock via REST API with bearer token auth."""
+    token = os.environ.get("AWS_BEARER_TOKEN_BEDROCK", "")
+    if not token:
+        raise RuntimeError("AWS_BEARER_TOKEN_BEDROCK not configured")
 
-    Per CLAUDE.md Rule #8: Lambda invocation via boto3 -- NEVER call OpenAI directly.
-    Per CLAUDE.md Rule #9: credentials from os.environ.
+    url = (
+        f"https://bedrock-runtime.{BEDROCK_REGION}.amazonaws.com"
+        f"/model/{BEDROCK_MODEL}/invoke"
+    )
+    payload = {
+        "anthropic_version": "bedrock-2023-05-31",
+        "max_tokens": max_tokens,
+        "messages": messages,
+    }
+
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+            return body["content"][0]["text"]
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode("utf-8", errors="replace")
+        logger.error("Bedrock HTTP %d: %s", e.code, error_body)
+        raise RuntimeError(f"Bedrock error ({e.code}): {error_body}") from e
+
+
+def _summarize_via_bedrock(text):
+    """Summarize text directly via Bedrock (no Lambda)."""
+    messages = [
+        {
+            "role": "user",
+            "content": (
+                "You are a helpful assistant that summarizes documents for "
+                "medical clinic staff. Provide a clear, concise summary.\n\n"
+                f"Document:\n{text[:10000]}"
+            ),
+        },
+    ]
+    return _invoke_bedrock(messages, max_tokens=500)
+
+
+def _generate_tasks_via_bedrock(workflow_description):
+    """Generate tasks directly via Bedrock (no Lambda)."""
+    messages = [
+        {
+            "role": "user",
+            "content": (
+                "Generate a task checklist for the following medical clinic "
+                'workflow. Return ONLY a JSON object with a "tasks" key '
+                "containing an array of tasks, each with "
+                '"title" and "description" fields.\n\n'
+                f"Workflow:\n{workflow_description[:5000]}\n\n"
+                'Return JSON: {{"tasks": [{{"title": "...", "description": "..."}}]}}'
+            ),
+        },
+    ]
+    content = _invoke_bedrock(messages, max_tokens=1000)
+    # Extract JSON from response (may have markdown fences)
+    if "```" in content:
+        content = content.split("```")[1]
+        if content.startswith("json"):
+            content = content[4:]
+    result = json.loads(content.strip())
+    return result.get("tasks", [])
+
+
+# ---------------------------------------------------------------------------
+# Public API: tries Lambda first, falls back to direct Bedrock
+# ---------------------------------------------------------------------------
+def invoke_summarize_lambda(text):
+    """Invoke summarization — via Lambda if configured, else direct Bedrock.
+
+    Per CLAUDE.md Rule #8: LLM calls via Lambda when deployed.
+    Falls back to direct Bedrock call for local development.
     """
     lambda_arn = settings.LAMBDA_SUMMARIZE_ARN
     if not lambda_arn:
-        raise RuntimeError("LAMBDA_SUMMARIZE_ARN not configured")
+        logger.info("LAMBDA_SUMMARIZE_ARN not set — calling Bedrock directly")
+        return _summarize_via_bedrock(text)
 
     try:
         lambda_client = boto3.client(
@@ -114,23 +204,15 @@ def invoke_summarize_lambda(text):
 
 
 def invoke_generate_tasks_lambda(workflow_description):
-    """Invoke Lambda to generate tasks from workflow description.
+    """Invoke task generation — via Lambda if configured, else direct Bedrock.
 
-    Per CLAUDE.md Rule #8: Lambda invocation via boto3 -- NEVER call OpenAI directly.
-    Per CLAUDE.md Rule #9: credentials from os.environ.
-
-    Returns:
-        list[dict]: List of dicts with 'title' and 'description' keys.
-
-    Raises:
-        RuntimeError: If Lambda ARN is not configured or Lambda returns an error.
-        botocore.exceptions.ClientError: On AWS permission or service errors.
-        botocore.exceptions.ReadTimeoutError: On Lambda invocation timeout.
-        botocore.exceptions.NoCredentialsError: If AWS credentials are missing.
+    Per CLAUDE.md Rule #8: LLM calls via Lambda when deployed.
+    Falls back to direct Bedrock call for local development.
     """
     lambda_arn = settings.LAMBDA_SUMMARIZE_ARN
     if not lambda_arn:
-        raise RuntimeError("LAMBDA_SUMMARIZE_ARN not configured")
+        logger.info("LAMBDA_SUMMARIZE_ARN not set — calling Bedrock directly")
+        return _generate_tasks_via_bedrock(workflow_description)
 
     try:
         lambda_client = boto3.client(

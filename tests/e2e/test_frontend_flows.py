@@ -15,10 +15,7 @@ Tests cover:
 11. Unauthenticated access blocked
 """
 
-import re
-import pytest
-from playwright.sync_api import Page, expect
-
+from playwright.sync_api import Page
 
 BASE_URL = "http://portal.localhost:8000"
 CLINIC_URL = "http://clinic1.localhost:8000"
@@ -53,7 +50,11 @@ class TestLandingPage:
         page.goto(f"{BASE_URL}/")
         # Should have some form or heading related to clinic signup
         content = page.content()
-        assert "clinic" in content.lower() or "sign" in content.lower() or "register" in content.lower()
+        assert (
+            "clinic" in content.lower()
+            or "sign" in content.lower()
+            or "register" in content.lower()
+        )
 
     def test_landing_page_has_login_link(self, page: Page):
         """Landing page should have a link to login."""
@@ -74,14 +75,25 @@ class TestRegistration:
     def test_register_page_has_form(self, page: Page):
         """Registration page should have email, password, and name fields."""
         page.goto(f"{BASE_URL}/register/")
-        assert page.locator('input[type="email"], input[name="email"], #email').count() > 0
-        assert page.locator('input[type="password"], input[name="password"], #password').count() > 0
+        assert (
+            page.locator('input[type="email"], input[name="email"], #email').count() > 0
+        )
+        assert (
+            page.locator(
+                'input[type="password"], input[name="password"], #password'
+            ).count()
+            > 0
+        )
 
     def test_register_new_user(self, page: Page):
         """Registering a new user should succeed."""
         page.goto(f"{BASE_URL}/register/")
-        page.fill('input[type="email"], input[name="email"], #email', "e2etest@test.com")
-        page.fill('input[type="password"], input[name="password"], #password', "testpass123")
+        page.fill(
+            'input[type="email"], input[name="email"], #email', "e2etest@test.com"
+        )
+        page.fill(
+            'input[type="password"], input[name="password"], #password', "testpass123"
+        )
         # Fill name if the field exists
         name_field = page.locator('input[name="name"], #name')
         if name_field.count() > 0:
@@ -90,7 +102,11 @@ class TestRegistration:
         page.wait_for_timeout(1500)
         # Should redirect to login or show success
         content = page.content()
-        assert "login" in page.url.lower() or "success" in content.lower() or "registered" in content.lower()
+        assert (
+            "login" in page.url.lower()
+            or "success" in content.lower()
+            or "registered" in content.lower()
+        )
 
 
 # ──────────────────────────────────────────────
@@ -105,8 +121,15 @@ class TestLogin:
     def test_login_page_has_form(self, page: Page):
         """Login page should have email and password fields."""
         page.goto(f"{CLINIC_URL}/login/")
-        assert page.locator('input[type="email"], input[name="email"], #email').count() > 0
-        assert page.locator('input[type="password"], input[name="password"], #password').count() > 0
+        assert (
+            page.locator('input[type="email"], input[name="email"], #email').count() > 0
+        )
+        assert (
+            page.locator(
+                'input[type="password"], input[name="password"], #password'
+            ).count()
+            > 0
+        )
 
     def test_login_valid_credentials(self, page: Page):
         """Login with valid credentials should redirect to dashboard."""
@@ -114,7 +137,11 @@ class TestLogin:
         # Should be on dashboard (root) or see dashboard content
         assert "/login" not in page.url
         content = page.content()
-        assert "dashboard" in content.lower() or "workflow" in content.lower() or "stat" in content.lower()
+        assert (
+            "dashboard" in content.lower()
+            or "workflow" in content.lower()
+            or "stat" in content.lower()
+        )
 
     def test_login_invalid_password(self, page: Page):
         """Login with wrong password should show error."""
@@ -122,7 +149,12 @@ class TestLogin:
         page.wait_for_timeout(500)
         content = page.content()
         # Should still be on login page or show error
-        assert "login" in page.url.lower() or "error" in content.lower() or "invalid" in content.lower() or "failed" in content.lower()
+        assert (
+            "login" in page.url.lower()
+            or "error" in content.lower()
+            or "invalid" in content.lower()
+            or "failed" in content.lower()
+        )
 
 
 # ──────────────────────────────────────────────
@@ -153,8 +185,14 @@ class TestDashboard:
         page.goto(f"{CLINIC_URL}/")
         page.wait_for_timeout(500)
         # Check for nav links
-        assert page.locator('a[href="/workflows/"]').count() > 0 or page.locator('a[href*="workflow"]').count() > 0
-        assert page.locator('a[href="/documents/"]').count() > 0 or page.locator('a[href*="document"]').count() > 0
+        assert (
+            page.locator('a[href="/workflows/"]').count() > 0
+            or page.locator('a[href*="workflow"]').count() > 0
+        )
+        assert (
+            page.locator('a[href="/documents/"]').count() > 0
+            or page.locator('a[href*="document"]').count() > 0
+        )
 
 
 # ──────────────────────────────────────────────
@@ -184,20 +222,28 @@ class TestWorkflows:
         page.wait_for_timeout(1000)
 
         # Look for create button/form
-        create_btn = page.locator('button:has-text("New"), button:has-text("Create"), button:has-text("Add")')
+        create_btn = page.locator(
+            'button:has-text("New"), button:has-text("Create"), button:has-text("Add")'
+        )
         if create_btn.count() > 0:
             create_btn.first.click()
             page.wait_for_timeout(500)
 
         # Fill workflow form if visible
-        name_field = page.locator('input[name="name"], input[placeholder*="name" i], #workflow-name')
+        name_field = page.locator(
+            'input[name="name"], input[placeholder*="name" i], #workflow-name'
+        )
         if name_field.count() > 0:
             name_field.first.fill("E2E Test Workflow")
-            desc_field = page.locator('textarea[name="description"], textarea, #workflow-description')
+            desc_field = page.locator(
+                'textarea[name="description"], textarea, #workflow-description'
+            )
             if desc_field.count() > 0:
                 desc_field.first.fill("Created by Playwright E2E test")
             # Submit
-            submit = page.locator('button[type="submit"], button:has-text("Save"), button:has-text("Create")')
+            submit = page.locator(
+                'button[type="submit"], button:has-text("Save")'
+            )
             if submit.count() > 0:
                 submit.first.click()
                 page.wait_for_timeout(1500)
@@ -211,13 +257,19 @@ class TestWorkflows:
         page.wait_for_timeout(1500)
 
         # Click on Patient Intake workflow
-        workflow_link = page.locator('text=Patient Intake, a:has-text("Patient Intake"), [data-workflow-name="Patient Intake"]')
+        workflow_link = page.locator(
+            'text=Patient Intake, a:has-text("Patient Intake")'
+        )
         if workflow_link.count() > 0:
             workflow_link.first.click()
             page.wait_for_timeout(1500)
             content = page.content()
             # Should show tasks
-            assert "insurance" in content.lower() or "task" in content.lower() or "intake" in content.lower()
+            assert (
+                "insurance" in content.lower()
+                or "task" in content.lower()
+                or "intake" in content.lower()
+            )
 
 
 # ──────────────────────────────────────────────
@@ -231,7 +283,7 @@ class TestTasks:
         page.wait_for_timeout(1500)
 
         # Click on Patient Intake to see tasks
-        workflow_link = page.locator('text=Patient Intake')
+        workflow_link = page.locator("text=Patient Intake")
         if workflow_link.count() > 0:
             workflow_link.first.click()
             page.wait_for_timeout(1500)
@@ -239,7 +291,7 @@ class TestTasks:
             # Should show status values from seeded data
             statuses = ["created", "assigned", "in_progress", "completed"]
             found = any(s in content.lower() for s in statuses)
-            assert found, f"Expected status badges in content"
+            assert found, "Expected status badges in content"
 
     def test_task_transition_via_api(self, page: Page):
         """Task state transition should work via API call."""
@@ -255,7 +307,7 @@ class TestTasks:
         created_task = next((t for t in tasks if t["status"] == "created"), None)
         if created_task:
             # Transition created → assigned
-            csrf_response = page.request.get(f"{CLINIC_URL}/api/auth/me")
+            page.request.get(f"{CLINIC_URL}/api/auth/me")
             transition_response = page.request.post(
                 f"{CLINIC_URL}/api/tasks/{created_task['id']}/transition",
                 data={"new_status": "assigned"},
@@ -282,14 +334,20 @@ class TestDocuments:
         page.goto(f"{CLINIC_URL}/documents/")
         page.wait_for_timeout(1500)
         content = page.content()
-        assert "Intake Form" in content or "intake" in content.lower() or "pdf" in content.lower()
+        assert (
+            "Intake Form" in content
+            or "intake" in content.lower()
+            or "pdf" in content.lower()
+        )
 
     def test_upload_button_exists(self, page: Page):
         """Documents page should have an upload button."""
         login_as(page, ADMIN_EMAIL, ADMIN_PASSWORD)
         page.goto(f"{CLINIC_URL}/documents/")
         page.wait_for_timeout(1000)
-        upload_btn = page.locator('button:has-text("Upload"), input[type="file"], button:has-text("upload")')
+        upload_btn = page.locator(
+            'button:has-text("Upload"), input[type="file"], button:has-text("upload")'
+        )
         assert upload_btn.count() > 0, "Upload button or file input should exist"
 
     def test_presigned_upload_url_api(self, page: Page):
@@ -329,7 +387,11 @@ class TestStaffManagement:
         page.wait_for_timeout(1500)
         content = page.content()
         # Should show seeded staff (Alice Johnson, Bob Smith)
-        assert "alice" in content.lower() or "bob" in content.lower() or "staff" in content.lower()
+        assert (
+            "alice" in content.lower()
+            or "bob" in content.lower()
+            or "staff" in content.lower()
+        )
 
     def test_staff_invite_form_exists(self, page: Page):
         """Staff page should have an invite form."""
@@ -337,7 +399,9 @@ class TestStaffManagement:
         page.goto(f"{CLINIC_URL}/staff/")
         page.wait_for_timeout(1000)
         # Should have email field for inviting
-        invite_field = page.locator('input[type="email"], input[name="email"], input[placeholder*="email" i]')
+        invite_field = page.locator(
+            'input[type="email"], input[name="email"], input[placeholder*="email" i]'
+        )
         assert invite_field.count() > 0, "Invite email field should exist on staff page"
 
 
@@ -350,7 +414,9 @@ class TestLogout:
         login_as(page, ADMIN_EMAIL, ADMIN_PASSWORD)
         page.goto(f"{CLINIC_URL}/")
         page.wait_for_timeout(500)
-        logout_btn = page.locator('#logout-btn, button:has-text("Logout"), button:has-text("logout")')
+        logout_btn = page.locator(
+            '#logout-btn, button:has-text("Logout"), button:has-text("logout")'
+        )
         assert logout_btn.count() > 0
 
     def test_logout_redirects_to_login(self, page: Page):
@@ -374,7 +440,7 @@ class TestLogout:
 class TestAccessControl:
     def test_unauthenticated_redirected_to_login(self, page: Page):
         """Unauthenticated users on tenant subdomain should be redirected to login."""
-        response = page.goto(f"{CLINIC_URL}/")
+        page.goto(f"{CLINIC_URL}/")
         page.wait_for_timeout(500)
         # Should redirect to login
         assert "login" in page.url.lower()
