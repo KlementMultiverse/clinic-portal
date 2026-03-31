@@ -317,3 +317,9 @@ api.add_router("/staff/", staff_router)
 from apps.tenants.api import tenant_router  # noqa: E402
 
 api.add_router("/tenants/", tenant_router)
+
+# Import and mount workflow/task routers (Phase 3)
+from apps.workflows.api import task_router, workflow_router  # noqa: E402
+
+api.add_router("/workflows/", workflow_router, tags=["workflows"])
+api.add_router("/tasks/", task_router, tags=["tasks"])
