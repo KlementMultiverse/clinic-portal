@@ -99,7 +99,17 @@ def rewrite_query(raw_query: str) -> str:
         return raw_query
 
     rewritten = strip_tags(rewritten)[:MAX_QUERY_LENGTH]
-    if not rewritten:
+
+    # Validate: if LLM returned conversational garbage, use original
+    if (
+        not rewritten
+        or len(rewritten.split()) > 20
+        or any(
+            w in rewritten.lower()
+            for w in ["i don't", "please", "however", "i'm ready", "provide"]
+        )
+    ):
+        logger.warning("Query rewrite returned bad output, using original")
         return raw_query
 
     logger.info("Query rewritten: '%s' → '%s'", raw_query[:50], rewritten[:50])
