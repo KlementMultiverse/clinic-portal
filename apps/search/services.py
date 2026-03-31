@@ -19,7 +19,7 @@ PUBMED_SUMMARY_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcg
 
 # Limits
 MAX_QUERY_LENGTH = 500
-MAX_RESULTS = 10
+MAX_RESULTS = 30
 TRIALS_CACHE_TTL = 6 * 3600  # 6 hours
 PAPERS_CACHE_TTL = 7 * 86400  # 7 days
 HTTPX_TIMEOUT = 10.0
