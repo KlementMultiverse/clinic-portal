@@ -40,8 +40,9 @@
                     </button>
                 </li>
             {% else %}
-                <li><a href="/login/">Login</a></li>
-                <li><a href="/register/">Register</a></li>
+                {% if request.tenant and request.tenant.schema_name != "public" %}
+                    <li><a href="/login/">Login</a></li>
+                {% endif %}
             {% endif %}
         </ul>
     </nav>
