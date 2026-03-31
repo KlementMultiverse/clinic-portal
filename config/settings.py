@@ -13,9 +13,10 @@ if not SECRET_KEY:
     SECRET_KEY = "django-insecure-dev-only-key"
 
 DEBUG = os.environ.get("DEBUG", "False").lower() == "true"
-ALLOWED_HOSTS = os.environ.get(
-    "ALLOWED_HOSTS", "localhost,portal.localhost,clinic1.localhost,clinic2.localhost"
-).split(",")
+ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "").split(",")
+if not ALLOWED_HOSTS or ALLOWED_HOSTS == [""]:
+    # In dev: allow all .localhost subdomains for dynamic tenant creation
+    ALLOWED_HOSTS = [".localhost", "localhost", "127.0.0.1"]
 
 SHARED_APPS = [
     "django_tenants",
