@@ -103,8 +103,14 @@ def _summarize_with_claude(document):
             "type": "text",
             "text": (
                 "Summarize this document for a medical clinic staff member. "
-                "Keep the summary under 200 words. Use plain language. "
-                "Structure: 1-2 sentence overview, then key points as bullets."
+                "Rules: "
+                "Keep under 200 words. "
+                "Use plain language. "
+                "Do NOT use any markdown formatting — no #, no **, no ##, no bold. "
+                "Write in plain text only. "
+                "Start with a 1-2 sentence overview. "
+                "Then list key points with simple dashes (- point). "
+                "No title or heading needed — start directly with the overview."
             ),
         }
     )
@@ -130,9 +136,18 @@ def _summarize_with_claude(document):
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
             body = json.loads(resp.read().decode("utf-8"))
+            raw_text = body["content"][0]["text"]
             from django.utils.html import strip_tags
 
-            return strip_tags(body["content"][0]["text"]).strip()
+            clean = strip_tags(raw_text).strip()
+            # Strip markdown formatting that Claude sometimes adds
+            import re
+
+            clean = re.sub(r"^#{1,3}\s+", "", clean, flags=re.MULTILINE)  # # headers
+            clean = re.sub(r"\*\*(.*?)\*\*", r"\1", clean)  # **bold**
+            clean = re.sub(r"\*(.*?)\*", r"\1", clean)  # *italic*
+            clean = re.sub(r"^>\s+", "", clean, flags=re.MULTILINE)  # > blockquotes
+            return clean.strip()
     except Exception as exc:
         logger.error("Claude summarization failed: %s", exc)
         return None
