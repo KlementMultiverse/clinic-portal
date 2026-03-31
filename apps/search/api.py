@@ -187,6 +187,8 @@ class ChatOut(Schema):
     has_context: bool
     trials_count: int
     papers_count: int
+    trials: list = []
+    papers: list = []
 
 
 class ChatThreadOut(Schema):
