@@ -381,8 +381,8 @@ class TaskEndpointTest(TenantTestCase):
         )
         self.assertEqual(resp.status_code, 403)
 
-    def test_staff_can_transition_task(self):
-        """Staff users can transition tasks."""
+    def test_staff_cannot_transition_task(self):
+        """Staff users cannot transition tasks (admin-only)."""
         resp = self._post_json(
             "/api/tasks/",
             {
@@ -396,7 +396,7 @@ class TaskEndpointTest(TenantTestCase):
             f"/api/tasks/{task_id}/transition",
             {"new_status": "assigned"},
         )
-        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.status_code, 403)
 
 
 @CACHE_OVERRIDE

@@ -16,7 +16,7 @@ DEBUG = os.environ.get("DEBUG", "False").lower() == "true"
 ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "").split(",")
 if not ALLOWED_HOSTS or ALLOWED_HOSTS == [""]:
     # In dev: allow all .localhost subdomains for dynamic tenant creation
-    ALLOWED_HOSTS = [".localhost", "localhost", "127.0.0.1"]
+    ALLOWED_HOSTS = [".localhost", "localhost", "127.0.0.1", ".ngrok-free.app", ".ngrok.io"]
 
 SHARED_APPS = [
     "django_tenants",
@@ -124,6 +124,10 @@ CSRF_TRUSTED_ORIGINS = [
     "http://clinic2.localhost:8000",
     "http://localhost:8000",
 ]
+# Allow ngrok for live demo
+NGROK_URL = os.environ.get("NGROK_URL", "")
+if NGROK_URL:
+    CSRF_TRUSTED_ORIGINS.append(NGROK_URL)
 
 STATIC_URL = "static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]

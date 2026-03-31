@@ -1,5 +1,9 @@
-from django.contrib.auth.decorators import login_required
+from django.contrib.auth.decorators import login_required, user_passes_test
 from django.shortcuts import render
+
+
+def is_admin(user):
+    return user.role == "admin"
 
 
 def landing(request):
@@ -36,8 +40,9 @@ def documents(request):
 
 
 @login_required
+@user_passes_test(is_admin)
 def staff(request):
-    """Staff management page (auth required, admin only enforced in template)."""
+    """Staff management page (auth required, admin only)."""
     return render(request, "staff.html")
 
 

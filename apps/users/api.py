@@ -82,7 +82,7 @@ class StaffInviteOut(Schema):
     email: str
     name: str
     role: str
-    is_new: bool
+    must_reset: bool  # True = new user who needs a temp password
 
 
 class PasswordResetIn(Schema):
@@ -275,7 +275,6 @@ def invite_staff(request: HttpRequest, data: StaffInviteIn):
     tenant = _get_current_tenant(request)
     _require_admin(request)
 
-    is_new = False
     try:
         user = User.objects.get(email=data.email)
     except User.DoesNotExist:
@@ -288,7 +287,6 @@ def invite_staff(request: HttpRequest, data: StaffInviteIn):
         )
         user.must_reset_password = True
         user.save(update_fields=["must_reset_password"])
-        is_new = True
 
     try:
         tenant.add_user(user)
@@ -302,7 +300,7 @@ def invite_staff(request: HttpRequest, data: StaffInviteIn):
         "email": user.email,
         "name": user.name,
         "role": user.role,
-        "is_new": is_new,
+        "must_reset": user.must_reset_password,
     }
 
 

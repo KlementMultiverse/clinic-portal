@@ -430,6 +430,7 @@ def transition_task(request: HttpRequest, task_id: int, data: TaskTransitionIn):
     - 401 Unauthorized: not authenticated
     - 404 Not Found: task does not exist
     """
+    _require_admin(request)
     try:
         task = Task.objects.get(pk=task_id)
     except Task.DoesNotExist:
