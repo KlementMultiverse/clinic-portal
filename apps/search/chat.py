@@ -208,4 +208,6 @@ def chat(user, message, thread_id=None):
         "has_context": bool(thread.trials_context or thread.papers_context),
         "trials_count": len(thread.trials_context or []),
         "papers_count": len(thread.papers_context or []),
+        "trials": thread.trials_context or [],
+        "papers": thread.papers_context or [],
     }
