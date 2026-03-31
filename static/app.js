@@ -6,9 +6,14 @@
  */
 
 /**
- * Get CSRF token from the meta tag injected by base.html.
+ * Get CSRF token — try cookie first (always fresh after login),
+ * fall back to meta tag.
  */
 function getCsrfToken() {
+    // Cookie is always up-to-date (Django sets it on every response)
+    var match = document.cookie.match(/csrftoken=([^;]+)/);
+    if (match) return match[1];
+    // Fallback to meta tag
     var meta = document.querySelector('meta[name="csrf-token"]');
     return meta ? meta.content : '';
 }
