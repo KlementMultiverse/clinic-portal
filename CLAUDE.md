@@ -116,6 +116,13 @@ Re-read this section at the start of every task.
 14. Run tests after EVERY code change — `uv run python manage.py test`
 15. Frontend: Django templates + vanilla JS — NEVER React/Vue/Angular
 
+## Lessons Learned (from retrospective 01)
+
+16. django-ninja CSRF is handled per-auth-class (`SessionAuth.csrf=True`), NOT via `NinjaAPI(csrf=True)` — verify API parameters exist in installed version before using
+17. When improving a pattern in a service module (e.g., adding error handling), apply the improvement to ALL existing functions in that module — not just the new one
+18. LLM output from Lambda MUST be sanitized with `strip_tags()` before storage — treat as untrusted input
+19. Every service function calling external APIs (S3, Lambda) MUST have try/except for ClientError, timeout, and credentials errors
+
 ## Post-Implementation Rule
 
 <system-reminder>
