@@ -1,8 +1,14 @@
-"""Conversational clinical QA chat service.
+"""Intelligent Clinical QA Chat — unified search + conversation.
 
-Manages multi-turn conversations with clinical search context.
-Each thread has its own search context (trials + papers) that
-the AI uses to answer follow-up questions.
+Implements the "Peeking Under the Hood" pattern from Claude Code:
+  Call 1: Classify intent (search / follow-up / general chat)
+  Call 2: Rewrite query if search needed
+  Call 3: Generate response with full context
+
+Memory layers:
+  - Thread context: trials + papers from searches (temporary)
+  - Message history: full conversation (permanent)
+  - User identity: name remembered across messages
 """
 
 import json
@@ -18,11 +24,10 @@ from apps.search.services import rewrite_query, run_search
 
 logger = logging.getLogger(__name__)
 
-MAX_HISTORY_TURNS = 10  # Keep last 10 messages for context
+MAX_HISTORY_TURNS = 10
 
 
 def get_or_create_thread(user, thread_id=None):
-    """Get existing thread or create a new one."""
     if thread_id:
         try:
             return ChatThread.objects.get(id=thread_id, user=user)
@@ -31,72 +36,144 @@ def get_or_create_thread(user, thread_id=None):
     return ChatThread.objects.create(user=user)
 
 
-def _needs_new_search(message, thread):
-    """Determine if a message needs fresh clinical data or can use existing context."""
-    # If thread has no context yet, always search
-    if not thread.trials_context and not thread.papers_context:
-        return True
-    # Check for explicit search intent
-    search_triggers = [
-        "search for",
-        "look up",
-        "find",
-        "what about",
-        "any trials",
-        "any studies",
-        "new search",
-        "compare with",
-        "instead of",
-    ]
-    msg_lower = message.lower()
-    return any(trigger in msg_lower for trigger in search_triggers)
+def _call_llm(messages, max_tokens=400, temperature=0.3):
+    """Call Claude Haiku API."""
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return None
+    model = os.environ.get("LLM_MODEL", "claude-haiku-4-5-20251001")
+    payload = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "messages": messages,
+    }
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+            return strip_tags(body["content"][0]["text"]).strip()
+    except Exception as exc:
+        logger.error("LLM call failed: %s", exc)
+        return None
+
+
+def _classify_intent(message, has_context):
+    """Call 1: Classify user intent.
+
+    Returns: 'search', 'follow_up', or 'general'
+    """
+    prompt = (
+        "Classify this message into exactly one category. "
+        "Reply with ONLY the category name, nothing else.\n\n"
+        "Categories:\n"
+        "- search: user wants to find clinical trials, research papers, "
+        "drug info, or medical data (e.g. 'find trials for metformin', "
+        "'what research exists on SGLT2', 'look up aspirin studies')\n"
+        "- follow_up: user is asking about previously shown results "
+        "(e.g. 'which ones are recruiting?', 'tell me more about that', "
+        "'what about side effects?')\n"
+        "- general: greeting, thanks, general question, or anything "
+        "not about searching medical databases\n\n"
+        f"Has existing search context: {has_context}\n"
+        f"Message: {message}\n"
+        "Category:"
+    )
+    result = _call_llm(
+        [{"role": "user", "content": prompt}],
+        max_tokens=10,
+        temperature=0.0,
+    )
+    if not result:
+        # Fallback: keyword detection
+        lower = message.lower()
+        search_words = [
+            "search",
+            "find",
+            "look up",
+            "trials",
+            "studies",
+            "research",
+            "papers",
+            "what about",
+            "instead",
+        ]
+        if any(w in lower for w in search_words):
+            return "search"
+        if has_context:
+            return "follow_up"
+        return "search"  # Default to search for clinical questions
+
+    result = result.lower().strip()
+    if "search" in result:
+        return "search"
+    if "follow" in result:
+        return "follow_up"
+    return "general"
 
 
 def _format_context(thread):
-    """Format the thread's search context for the LLM prompt."""
+    """Format search context for LLM prompt."""
     parts = []
     if thread.trials_context:
-        parts.append("=== CLINICAL TRIALS (from clinicaltrials.gov) ===")
-        for t in thread.trials_context[:8]:
+        parts.append("=== CLINICAL TRIALS ===")
+        for t in thread.trials_context[:10]:
             parts.append(
                 f"- [{t.get('nct_id', '')}] {t.get('title', '')} "
                 f"(Status: {t.get('status', '')})"
             )
     if thread.papers_context:
-        parts.append("\n=== RESEARCH PAPERS (from PubMed) ===")
-        for p in thread.papers_context[:8]:
+        parts.append("\n=== RESEARCH PAPERS ===")
+        for p in thread.papers_context[:10]:
             parts.append(f"- [PMID: {p.get('pmid', '')}] {p.get('title', '')}")
-            parts.append(
-                f"  {p.get('authors', '')} | {p.get('journal', '')} "
-                f"| {p.get('pub_date', '')}"
-            )
     return "\n".join(parts)
 
 
 def _format_history(thread):
-    """Format recent conversation history for the LLM."""
+    """Get recent conversation as message list."""
     messages = thread.messages.order_by("-created_at")[:MAX_HISTORY_TURNS]
-    messages = list(reversed(messages))
-    return [{"role": m.role, "content": m.content} for m in messages]
+    return [{"role": m.role, "content": m.content} for m in reversed(messages)]
 
 
 def chat(user, message, thread_id=None):
-    """Process a chat message and return the AI response.
+    """Process a chat message with intent classification.
 
-    1. Get or create thread
-    2. If new topic or explicit search request → fetch fresh data
-    3. Build prompt with conversation history + search context
-    4. Call Claude Haiku
-    5. Save both messages to thread
-    6. Return response + thread info
+    Call 1: Classify intent (search / follow_up / general)
+    Call 2: Rewrite query if search intent
+    Call 3: Generate response with context
     """
     thread = get_or_create_thread(user, thread_id)
 
     # Save user message
     ChatMessage.objects.create(thread=thread, role="user", content=message)
 
-    # Check if we need to search for new data
-    if _needs_new_search(message, thread):
+    # Set title from first message
+    if not thread.title:
+        thread.title = message[:100]
+        thread.save(update_fields=["title"])
+
+    has_context = bool(thread.trials_context or thread.papers_context)
+
+    # ── Call 1: Classify intent ──
+    intent = _classify_intent(message, has_context)
+    logger.info(
+        "Chat intent: %s for thread=%d msg='%s'",
+        intent,
+        thread.id,
+        message[:50],
+    )
+
+    # ── Call 2: Search if needed ──
+    if intent == "search":
         try:
             search_query = rewrite_query(message)
             trials, papers = run_search(search_query)
@@ -104,101 +181,72 @@ def chat(user, message, thread_id=None):
             thread.papers_context = papers
             thread.save(update_fields=["trials_context", "papers_context"])
             logger.info(
-                "Chat search: %d trials, %d papers for thread=%d",
+                "Chat search: %d trials, %d papers",
                 len(trials),
                 len(papers),
-                thread.id,
             )
         except Exception as exc:
             logger.warning("Chat search failed: %s", exc)
 
-    # Set title from first message
-    if not thread.title:
-        thread.title = message[:100]
-        thread.save(update_fields=["title"])
-
-    # Build prompt
+    # ── Call 3: Generate response ──
     context = _format_context(thread)
     history = _format_history(thread)
+    user_name = user.name or user.email.split("@")[0]
 
     system_text = (
-        "You are a clinical research assistant having a conversation "
-        "with a medical clinic staff member.\n\n"
+        f"You are a clinical research assistant helping {user_name}. "
+        "You have access to clinical trials and research papers.\n\n"
         "RULES:\n"
-        "- Answer based on the clinical data context provided below\n"
-        "- Cite sources: [NCT...] for trials, [PMID: ...] for papers\n"
-        "- If asked something outside the provided context, say you "
-        "don't have data on that and suggest they search for it\n"
-        "- Be conversational but concise — 2-4 sentences for simple "
-        "questions, more for complex ones\n"
-        "- No markdown headers or formatting — plain text with "
-        "bullet points (-) when listing\n"
-        "- Remember the conversation history — don't repeat yourself\n"
+        "- If clinical data is available below, cite sources: "
+        "[NCT...] for trials, [PMID: ...] for papers\n"
+        "- Be conversational but precise — 2-5 sentences for "
+        "simple questions, more detail if asked\n"
+        "- No markdown formatting — plain text with dashes (-) "
+        "for lists\n"
+        "- Remember the conversation — don't repeat yourself\n"
+        "- If the user greets you, respond warmly and ask how "
+        "you can help with their clinical questions\n"
+        "- If you don't have data on something, say so and "
+        "suggest they ask a more specific question\n"
     )
 
     if context:
-        system_text += f"\nCLINICAL DATA CONTEXT:\n{context}\n"
+        system_text += f"\nCLINICAL DATA:\n{context}\n"
     else:
         system_text += (
             "\nNo clinical data loaded yet. If the user asks a "
-            "clinical question, suggest they search for specific "
-            "terms.\n"
+            "clinical question, you'll automatically search for "
+            "relevant trials and papers.\n"
         )
 
-    # Build messages array for Claude API
-    api_messages = [{"role": "user", "content": system_text}]
-    api_messages.append(
+    api_messages = [
+        {"role": "user", "content": system_text},
         {
             "role": "assistant",
-            "content": "I understand. I'll help answer clinical "
-            "questions using the provided research data, citing "
-            "sources for every claim.",
-        }
-    )
-    # Add conversation history (skip the last user message — it's the current one)
+            "content": f"Hello {user_name}! I'm your clinical "
+            "research assistant. I can search real medical "
+            "databases and answer questions with citations. "
+            "How can I help?",
+        },
+    ]
+    # Add conversation history (skip last — it's the current msg)
     for msg in history[:-1]:
         api_messages.append(msg)
-    # Add current message
     api_messages.append({"role": "user", "content": message})
 
-    # Call Claude
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        response_text = (
-            "I can't generate AI responses right now — the API key "
-            "isn't configured. Your search data is still available "
-            "in the results below."
-        )
-    else:
-        model = os.environ.get("LLM_MODEL", "claude-haiku-4-5-20251001")
-        payload = {
-            "model": model,
-            "max_tokens": 400,
-            "temperature": 0.3,
-            "messages": api_messages,
-        }
-        req = urllib.request.Request(
-            "https://api.anthropic.com/v1/messages",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                body = json.loads(resp.read().decode("utf-8"))
-                response_text = strip_tags(body["content"][0]["text"]).strip()
-        except Exception as exc:
-            logger.error("Chat LLM failed: %s", exc)
+    response_text = _call_llm(api_messages)
+    if not response_text:
+        if intent == "search" and thread.trials_context:
             response_text = (
-                "I'm having trouble processing that right now. "
-                "Try again in a moment."
+                f"I found {len(thread.trials_context)} trials and "
+                f"{len(thread.papers_context)} papers. "
+                "Check the results below — what would you like "
+                "to know about them?"
             )
+        else:
+            response_text = "I'm having trouble right now. Try again in a moment."
 
-    # Save assistant message
+    # Save assistant response
     ChatMessage.objects.create(thread=thread, role="assistant", content=response_text)
 
     return {

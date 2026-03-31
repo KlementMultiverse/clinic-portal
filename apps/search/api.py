@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime
+from typing import Optional
 
 from django.db.models import Count
 from django.http import HttpRequest
@@ -171,7 +172,7 @@ def search_history(request: HttpRequest):
 
 class ChatIn(Schema):
     message: str
-    thread_id: int = None  # None = new conversation
+    thread_id: Optional[int] = None  # None = new conversation
 
 
 class ChatMessageOut(Schema):
