@@ -140,7 +140,7 @@ Then the status updates, an AuditLog entry records the transition, and the task 
 
 Given an authenticated user on a tenant subdomain
 When they request a presigned upload URL with filename "report.pdf"
-Then the returned URL contains the S3 key `{tenant_schema}/{uuid}/report.pdf` and expires in 15 minutes
+Then the returned URL contains the S3 key `{tenant_schema_name}/{uuid}/report.pdf` and expires in 15 minutes
 
 Given a document has been uploaded and registered
 When a user clicks "Summarize"
@@ -151,8 +151,8 @@ When they attempt to access tenant B's subdomain
 Then TenantAccessMiddleware blocks the request and returns a 403
 
 Given an admin on a tenant
-When they add a staff member by providing their email address (and name/password for new users)
-Then the user is created (or existing user found by email) with role=staff and associated with the current tenant (note: SPEC.md excludes email/SMS notifications — "by email" means identifying users by email address, not sending invitation emails)
+When they add a staff member by providing their email address and name
+Then the user is created with a temporary password (or existing user found by email) with role=staff and associated with the current tenant, and the user must set their own password on first login (admins never handle staff passwords directly)
 
 Given the dashboard endpoint is called
 When there are 3 workflows, 10 tasks (4 completed, 3 in_progress, 2 assigned, 1 created), and 5 documents

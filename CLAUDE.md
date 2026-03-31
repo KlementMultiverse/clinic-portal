@@ -12,7 +12,7 @@ EVERY stage boundary requires /gate (CodeRabbit must have 0 suggestions before p
 You do NOT need to be told which commands to use — this flow tells you. Just start.
 </system-reminder>
 
-```
+```text
 STAGE 0: PLAN (do this FIRST — before any other stage)
   1. Read SPEC.md completely
   2. Create an implementation plan table showing:
