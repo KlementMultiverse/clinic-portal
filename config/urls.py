@@ -7,6 +7,7 @@ from config.views import (
     documents,
     login_view,
     register_view,
+    search_view,
     staff,
     workflows,
 )
@@ -20,4 +21,5 @@ urlpatterns = [
     path("workflows/", workflows, name="workflows"),
     path("documents/", documents, name="documents"),
     path("staff/", staff, name="staff"),
+    path("search/", search_view, name="search"),
 ]

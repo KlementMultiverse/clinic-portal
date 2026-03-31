@@ -348,3 +348,8 @@ api.add_router("/documents/", document_router, tags=["documents"])
 from apps.dashboard.api import dashboard_router  # noqa: E402
 
 api.add_router("/dashboard/", dashboard_router, tags=["dashboard"])
+
+# Import and mount search router (Phase 7 - Clinical QA Search)
+from apps.search.api import search_router  # noqa: E402
+
+api.add_router("/search/", search_router, tags=["search"])

@@ -39,3 +39,9 @@ def documents(request):
 def staff(request):
     """Staff management page (auth required, admin only enforced in template)."""
     return render(request, "staff.html")
+
+
+@login_required
+def search_view(request):
+    """Clinical QA search page (auth required)."""
+    return render(request, "search.html")

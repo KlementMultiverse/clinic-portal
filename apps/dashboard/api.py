@@ -7,6 +7,7 @@ from ninja import Router, Schema
 from ninja.security import django_auth
 
 from apps.documents.models import Document
+from apps.search.models import SearchHistory
 from apps.users.models import User
 from apps.workflows.models import Task, Workflow
 
@@ -21,6 +22,7 @@ class DashboardStatsOut(Schema):
     total_workflows: int
     total_documents: int
     total_staff: int
+    total_searches: int = 0
     tasks_by_status: dict  # {"created": 1, "assigned": 2, ...}
     recent_actions: list = []
 
@@ -63,12 +65,15 @@ def get_stats(request: HttpRequest):
     )
     tasks_by_status = {item["status"]: item["count"] for item in status_counts}
 
+    total_searches = SearchHistory.objects.count()
+
     recent_actions = request.session.get("recent_actions", [])
 
     result = {
         "total_workflows": total_workflows,
         "total_documents": total_documents,
         "total_staff": total_staff,
+        "total_searches": total_searches,
         "tasks_by_status": tasks_by_status,
         "recent_actions": recent_actions,
     }
