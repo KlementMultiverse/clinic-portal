@@ -562,6 +562,166 @@ The `seed_demo.py` script should:
 5. Create a sample workflow "Patient Intake" with 4 tasks in various states
 6. Create a sample document
 
+## Intelligent Backend Patterns (MUST implement all)
+
+### Pre-Work Context Calls (from Claude Code internals — "Peeking Under the Hood" article)
+Before any LLM call (summarization or task generation), run 2 preparatory steps:
+1. **Context summary call**: Summarize what the user has been doing in this session (last 3 actions from AuditLog) — inject as context into the LLM prompt so the summary is contextually relevant
+2. **Query classification call**: Classify the request type ("summarize_document" vs "generate_tasks" vs "unknown") — route to the correct prompt template. Do NOT use the same prompt for both.
+
+### Redis Caching (MUST use — Redis is already running)
+Cache these with tenant-aware keys (`django_tenants.cache.make_key`):
+
+| What to Cache | TTL | Key Pattern | Why |
+|---|---|---|---|
+| Dashboard stats | 60 seconds | `dashboard:stats` | Avoids 4 DB queries on every page load |
+| Workflow list | 30 seconds | `workflows:list` | Frequently accessed, rarely changes |
+| S3 presigned download URLs | 14 minutes | `s3:download:{doc_id}` | Presigned URLs expire in 15 min, cache for 14 |
+| LLM summarization results | 24 hours | `llm:summary:{doc_id}` | Same document = same summary, expensive to re-generate |
+| LLM generated tasks | 1 hour | `llm:tasks:{workflow_id}:{hash}` | Same description = same tasks |
+| User session data | 30 minutes | handled by SESSION_ENGINE | Already configured via Redis session backend |
+
+Cache invalidation: invalidate on mutations (create/update/delete) using Django signals or explicit `cache.delete()` in service functions.
+
+### Memory Patterns
+
+**Temporary memory (session-scoped):**
+- Store user's last 5 actions in the session: `request.session["recent_actions"] = [...]`
+- Use this to personalize dashboard: "You last worked on Patient Intake workflow"
+- Cleared on logout
+
+**Permanent memory (DB-scoped):**
+- AuditLog already tracks all mutations — use it for "activity feed" on dashboard
+- Store user preferences per tenant in a `UserPreference` model (optional — future enhancement)
+
+### LLM Prompt Engineering (for Lambda handler)
+
+**Temperature:** 0.2 for summarization (deterministic, factual), 0.5 for task generation (slightly creative)
+
+**Summarization prompt MUST include:**
+```
+<system-reminder>
+You are summarizing a document for a medical clinic staff member.
+- Summarize ONLY what is in the document — do NOT add information from your training data
+- Keep the summary under 200 words
+- Use plain language — avoid medical jargon unless it's in the document
+- Structure: 1-2 sentence overview, then key points as bullets
+- If the document is too short to summarize meaningfully, say so
+</system-reminder>
+```
+
+**Task generation prompt MUST include:**
+```
+<system-reminder>
+You are generating a task checklist for a clinic workflow.
+- Generate 3-8 tasks (not more, not fewer)
+- Each task must be a concrete, actionable step (not vague like "do the thing")
+- Tasks should be in logical order (dependencies first)
+- Each task needs a title (under 100 chars) and a description (1-2 sentences)
+- Output ONLY valid JSON: {"tasks": [{"title": "...", "description": "..."}, ...]}
+- Do NOT include tasks outside the workflow's scope
+</system-reminder>
+```
+
+**K-shot examples in prompts (Week 1 pattern):**
+Include 2 examples in each prompt to stabilize output format:
+```
+Example 1:
+Input: "Patient check-in process at front desk"
+Output: {"tasks": [{"title": "Greet patient and verify appointment", "description": "Confirm patient name, appointment time, and provider."}, ...]}
+
+Example 2:
+Input: "Lab result review workflow"
+Output: {"tasks": [{"title": "Retrieve lab results from portal", "description": "Log into lab portal and download latest results for the patient."}, ...]}
+```
+
+### LLM Output Validation (MUST implement)
+- **Sanitize**: `strip_tags()` on ALL LLM output before storing in DB — treat as untrusted input
+- **Validate JSON**: For task generation, parse the JSON response. If invalid JSON, retry once. If still invalid, return error "AI could not generate tasks — try rephrasing the workflow description"
+- **Length check**: If summary > 500 words, truncate with "... [summary truncated]"
+- **Empty check**: If LLM returns empty or just whitespace, return "Summary unavailable" — never store empty string
+
+### Reflexion Pattern for LLM (Week 1)
+If LLM output fails validation:
+1. First attempt: standard prompt
+2. If fails validation → add the error to the prompt: "Your previous response was invalid because [reason]. Try again."
+3. If fails again → return graceful error to user
+Max 2 retries per LLM call.
+
+### Chain-of-Thought for Summarization (Week 1)
+The summarization prompt should instruct the LLM to reason before summarizing:
+```
+Step 1: Identify the document type (report, form, notes, letter)
+Step 2: Extract the 3-5 most important facts
+Step 3: Write a concise summary based on those facts
+
+<reasoning>
+[Your analysis here — this will be stripped before storing]
+</reasoning>
+
+Summary: [Your final summary here — this is what gets stored]
+```
+Parse out the `<reasoning>` block — store only the Summary portion.
+
+### Error Handling on ALL External Calls
+Every call to S3 or Lambda MUST have:
+```python
+try:
+    result = boto3_call(...)
+except botocore.exceptions.ClientError as e:
+    logger.warning(f"AWS error: {e.response['Error']['Code']}: {e.response['Error']['Message']}")
+    return graceful_fallback
+except (botocore.exceptions.ReadTimeoutError, botocore.exceptions.ConnectTimeoutError):
+    logger.warning(f"AWS timeout on {operation}")
+    return graceful_fallback
+except botocore.exceptions.NoCredentialsError:
+    logger.error("AWS credentials not configured")
+    return graceful_fallback
+```
+Never let boto3 exceptions propagate to the user. Always return a structured error response.
+
+### Observability (10 Logging Points — Steve's SDLC)
+Every app MUST log at INFO level:
+1. **Function entry**: `logger.info(f"{func_name} called: {params}")`
+2. **Function exit**: `logger.info(f"{func_name} returned: {result_summary}")`
+3. **Errors**: `logger.error(f"{func_name} failed: {error}", exc_info=True)`
+4. **External API calls**: `logger.info(f"S3 {operation}: {key}")` / `logger.info(f"Lambda invoke: {task_type}")`
+5. **State mutations**: `logger.info(f"Task {id} transitioned: {old} → {new} by {user}")`
+6. **Security events**: `logger.info(f"Login: {email}")` / `logger.warning(f"Failed login: {email}")`
+7. **Business milestones**: `logger.info(f"Tenant created: {name}")` / `logger.info(f"Workflow completed: {id}")`
+8. **Performance**: `logger.warning(f"Slow query: {ms}ms")` if any DB query > 500ms
+9. **Validation failures**: `logger.warning(f"Invalid transition: {old} → {new}")`
+10. **Resource limits**: `logger.warning(f"Cache miss rate high: {rate}%")`
+
+Never log: passwords, API keys, session tokens, PII (email is OK for auth logs but not in other contexts).
+
+### AWS Bedrock Integration (replaces OpenAI)
+The Lambda handler uses **AWS Bedrock** with Claude 3.5 Haiku — NOT OpenAI:
+```python
+import boto3
+import json
+
+bedrock = boto3.client("bedrock-runtime", region_name="us-east-1")
+
+def invoke_claude(prompt: str, max_tokens: int = 1024, temperature: float = 0.2) -> str:
+    response = bedrock.invoke_model(
+        modelId="us.anthropic.claude-3-5-haiku-20241022-v1:0",
+        contentType="application/json",
+        accept="application/json",
+        body=json.dumps({
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "messages": [{"role": "user", "content": prompt}]
+        })
+    )
+    result = json.loads(response["body"].read())
+    return result["content"][0]["text"]
+```
+
+Environment variable needed: `AWS_BEARER_TOKEN_BEDROCK` (Bedrock API key, expires April 4, 2026).
+Model: `us.anthropic.claude-3-5-haiku-20241022-v1:0` (inference profile ID).
+
 ## What NOT to Build
 
 - No patient registry or medical records
