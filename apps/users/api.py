@@ -323,3 +323,8 @@ from apps.workflows.api import task_router, workflow_router  # noqa: E402
 
 api.add_router("/workflows/", workflow_router, tags=["workflows"])
 api.add_router("/tasks/", task_router, tags=["tasks"])
+
+# Import and mount document router (Phase 4)
+from apps.documents.api import document_router  # noqa: E402
+
+api.add_router("/documents/", document_router, tags=["documents"])
