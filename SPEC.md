@@ -1,25 +1,26 @@
-# Multi-Tenant Clinic Management Portal — Build Spec
+# Multi-Tenant Clinic Management Portal — Complete Build Spec
 
 ## Overview
 
-Build a multi-tenant SaaS management portal where medical clinics sign up and get their own private workspace. Each clinic's data is fully isolated via PostgreSQL schema-per-tenant. The portal demonstrates **internal business process automation** for health-tech: clinics manage tasks/workflows with AI-powered summarization.
+Build a multi-tenant SaaS management portal where medical clinics sign up and get their own private workspace. Each clinic's data is fully isolated via PostgreSQL schema-per-tenant. The portal provides **internal business process automation** (workflows + tasks), **document management** via S3, **AI-powered summarization** via Claude Haiku, and a **clinical research QA system** that searches real medical databases (ClinicalTrials.gov + PubMed) with RAG-based AI summarization and conversational chat.
 
 ## Tech Stack (mandatory — use ALL)
 
-| Technology | Purpose |
-|---|---|
-| Python 3.12 | Runtime |
-| Django 5.x | Web framework |
-| Django Ninja | REST API layer (not DRF) |
-| django-tenants | Multi-tenancy via PostgreSQL schemas |
-| django-tenant-users | Global auth + per-tenant permissions |
-| PostgreSQL 15+ | Database (required by django-tenants) |
-| Redis | Session backend + tenant-aware caching |
-| AWS S3 | Document/file storage via presigned URLs |
-| AWS Lambda | LLM-powered summarization endpoint |
-| Docker + Docker Compose | Containerized local dev (PG + Redis + Django) |
-| uv | Python package manager |
-| LLM module | OpenAI API (called from Lambda) for text summarization |
+| Technology | Purpose | Version |
+|---|---|---|
+| Python | Runtime | 3.12 |
+| Django | Web framework | 5.x+ |
+| Django Ninja | REST API layer (NOT DRF) | 1.0+ |
+| django-tenants | Multi-tenancy via PostgreSQL schemas | 3.6+ |
+| django-tenant-users | Global auth + per-tenant permissions | 1.0+ |
+| PostgreSQL | Database (required by django-tenants) | 15+ |
+| Redis | Session backend + tenant-aware caching | 7+ |
+| AWS S3 | Document/file storage via presigned URLs | — |
+| Claude Haiku (Anthropic API) | LLM for summarization, task generation, clinical QA | claude-haiku-4-5 |
+| httpx | Async HTTP client for external API calls | 0.28+ |
+| Docker + Docker Compose | Containerized local dev (PG + Redis + Django) | — |
+| uv | Python package manager (NEVER pip) | latest |
+| Pico CSS | Frontend styling (CDN, no build step) | 2.x |
 
 ## Architecture
 
@@ -27,55 +28,66 @@ Build a multi-tenant SaaS management portal where medical clinics sign up and ge
 
 ```
 clinic-portal/
-├── docker-compose.yml          # PG + Redis + Django
+├── docker-compose.yml
 ├── Dockerfile
-├── pyproject.toml              # uv
-├── uv.lock
+├── pyproject.toml
 ├── manage.py
+├── .env.example
+├── .gitignore
 ├── config/
-│   ├── settings.py             # Django settings (shared/tenant apps, middleware, etc.)
-│   ├── urls.py                 # Tenant-specific URL routing
-│   ├── urls_public.py          # Public schema URLs (landing, signup)
+│   ├── settings.py
+│   ├── urls.py              # Tenant-specific URL routing
+│   ├── urls_public.py       # Public schema URLs (landing, signup)
+│   ├── views.py             # Template view functions
 │   └── wsgi.py
 ├── apps/
-│   ├── tenants/                # SHARED — Tenant + Domain models, signup logic
+│   ├── tenants/             # SHARED — Tenant + Domain models, signup
 │   │   ├── models.py
-│   │   ├── api.py              # Django Ninja routes: create tenant, list tenants (superadmin)
-│   │   └── services.py         # Tenant provisioning logic
-│   ├── users/                  # SHARED — Global user model (extends UserProfile)
+│   │   ├── api.py
+│   │   └── management/commands/
+│   │       ├── create_public_tenant.py
+│   │       └── seed_demo.py
+│   ├── users/               # SHARED — Global user model, auth, staff
 │   │   ├── models.py
-│   │   ├── api.py              # Login, register, invite staff, me endpoint
-│   │   └── services.py
-│   ├── dashboard/              # TENANT — Main dashboard view
-│   │   ├── api.py              # Dashboard stats endpoint
-│   │   └── templates/
-│   ├── workflows/              # TENANT — Business process automation
-│   │   ├── models.py           # Workflow, Task, AuditLog models
-│   │   ├── api.py              # CRUD + state transitions + assign
-│   │   ├── services.py         # State machine logic, validation
-│   │   └── templates/
-│   └── documents/              # TENANT — S3 file management
-│       ├── models.py           # Document model (S3 key, metadata)
-│       ├── api.py              # Upload (presigned URL), download, list, summarize
-│       └── services.py         # S3 presigned URL generation, Lambda invocation
+│   │   ├── api.py           # NinjaAPI instance + auth/staff/tenant routers
+│   │   ├── services.py      # track_action() session helper
+│   │   └── middleware.py    # PasswordResetMiddleware
+│   ├── dashboard/           # TENANT — Main dashboard
+│   │   └── api.py
+│   ├── workflows/           # TENANT — Business process automation
+│   │   ├── models.py        # Workflow, Task, AuditLog
+│   │   └── api.py
+│   ├── documents/           # TENANT — S3 file management
+│   │   ├── models.py
+│   │   ├── api.py
+│   │   └── services.py      # S3 + LLM service functions
+│   └── search/              # TENANT — Clinical QA search + chat
+│       ├── models.py        # SearchHistory, ChatThread, ChatMessage
+│       ├── api.py
+│       ├── services.py      # ClinicalTrials.gov + PubMed + RAG
+│       └── chat.py          # Conversational chat service
 ├── lambdas/
 │   └── summarize/
-│       ├── handler.py          # Lambda function: receives text, calls OpenAI, returns summary
+│       ├── handler.py
 │       └── requirements.txt
 ├── templates/
-│   ├── base.html               # Base template with nav, tenant context
-│   ├── landing.html            # Public landing page (signup/login)
+│   ├── base.html
+│   ├── landing.html
 │   ├── login.html
 │   ├── register.html
 │   ├── dashboard.html
 │   ├── workflows.html
-│   └── documents.html
+│   ├── documents.html
+│   ├── staff.html
+│   ├── search.html
+│   └── chat.html
 ├── static/
 │   ├── styles.css
 │   └── app.js
-└── scripts/
-    ├── create_public_tenant.py # Management command: creates public tenant + superadmin
-    └── seed_demo.py            # Seeds a demo clinic tenant with sample data
+└── tests/
+    └── e2e/
+        ├── test_frontend_flows.py
+        └── test_clinical_search.py
 ```
 
 ### SHARED_APPS vs TENANT_APPS
@@ -85,33 +97,43 @@ SHARED_APPS = [
     "django_tenants",           # Must be first
     "apps.tenants",             # Tenant + Domain models
     "apps.users",               # Global user model (UserProfile)
+    "tenant_users.permissions",  # In BOTH shared and tenant
+    "tenant_users.tenants",     # Shared only
     "django.contrib.contenttypes",
     "django.contrib.auth",
     "django.contrib.admin",
     "django.contrib.sessions",
     "django.contrib.messages",
+    "django.contrib.staticfiles",
 ]
 
 TENANT_APPS = [
+    "django.contrib.contenttypes",  # In BOTH
+    "django.contrib.auth",          # In BOTH
+    "tenant_users.permissions",     # In BOTH
     "apps.dashboard",
     "apps.workflows",
     "apps.documents",
+    "apps.search",
 ]
 
 INSTALLED_APPS = list(SHARED_APPS) + [app for app in TENANT_APPS if app not in SHARED_APPS]
 ```
 
-### Middleware (order matters)
+### Middleware (order matters — TenantMainMiddleware MUST be position 0)
 
 ```python
 MIDDLEWARE = [
-    "django_tenants.middleware.main.TenantMainMiddleware",    # MUST be position 0
+    "django_tenants.middleware.main.TenantMainMiddleware",    # Position 0 — resolves tenant from subdomain
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "apps.users.middleware.PasswordResetMiddleware",          # Custom — enforces password reset for invited staff
     "tenant_users.tenants.middleware.TenantAccessMiddleware",  # Blocks unauthorized tenant access
     "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 ```
 
@@ -121,32 +143,48 @@ MIDDLEWARE = [
 DATABASES = {
     "default": {
         "ENGINE": "django_tenants.postgresql_backend",  # NOT django.db.backends.postgresql
-        "NAME": env("DB_NAME", "clinic_portal"),
-        "USER": env("DB_USER", "postgres"),
-        "PASSWORD": env("DB_PASSWORD", "postgres"),
-        "HOST": env("DB_HOST", "localhost"),
-        "PORT": env("DB_PORT", "5432"),
+        "NAME": os.environ.get("DB_NAME", "clinic_portal"),
+        "USER": os.environ.get("DB_USER", "postgres"),
+        "PASSWORD": os.environ.get("DB_PASSWORD", "postgres"),
+        "HOST": os.environ.get("DB_HOST", "localhost"),
+        "PORT": os.environ.get("DB_PORT", "5432"),
     }
 }
 DATABASE_ROUTERS = ["django_tenants.routers.TenantSyncRouter"]
+TENANT_MODEL = "tenants.Tenant"
+TENANT_DOMAIN_MODEL = "tenants.Domain"
+AUTH_USER_MODEL = "users.User"
+AUTHENTICATION_BACKENDS = ["tenant_users.permissions.backend.UserBackend"]
 ```
 
 ### Redis Config
 
 ```python
-# Tenant-aware caching — keys won't collide across tenants
 CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.redis.RedisCache",
-        "LOCATION": env("REDIS_URL", "redis://localhost:6379/0"),
-        "KEY_FUNCTION": "django_tenants.cache.make_key",
+        "LOCATION": os.environ.get("REDIS_URL", "redis://localhost:6379/0"),
+        "KEY_FUNCTION": "django_tenants.cache.make_key",      # Tenant-aware keys
         "REVERSE_KEY_FUNCTION": "django_tenants.cache.reverse_key",
     }
 }
-
-# Redis session backend
 SESSION_ENGINE = "django.contrib.sessions.backends.cache"
 SESSION_CACHE_ALIAS = "default"
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
+SESSION_COOKIE_SECURE = not DEBUG  # True in production
+```
+
+### Security Settings
+
+```python
+SECRET_KEY = os.environ.get("SECRET_KEY", "")
+# Must raise ValueError if not set in production (DEBUG=False)
+
+DEBUG = os.environ.get("DEBUG", "False").lower() == "true"  # Default False
+ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "localhost,portal.localhost,clinic1.localhost").split(",")
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = "DENY"
 ```
 
 ### URL Routing
@@ -169,10 +207,10 @@ from tenant_users.tenants.models import TenantBase
 class Tenant(TenantBase):
     name = models.CharField(max_length=100)
     created_at = models.DateTimeField(auto_now_add=True)
-    auto_create_schema = True  # Auto-creates PG schema on save()
+    auto_create_schema = True
 
 class Domain(DomainMixin):
-    pass  # Maps hostname → tenant, supports is_primary flag
+    pass
 ```
 
 ### User (shared schema)
@@ -181,15 +219,42 @@ class Domain(DomainMixin):
 from tenant_users.tenants.models import UserProfile
 
 class User(UserProfile):
-    name = models.CharField(max_length=150)
+    name = models.CharField(max_length=150, blank=True, default="")
     role = models.CharField(max_length=20, choices=[("admin", "Admin"), ("staff", "Staff")], default="staff")
+    must_reset_password = models.BooleanField(default=False)
 ```
 
-### Workflow + Task (tenant schema — this is the business process automation)
+### AuditLog (tenant schema — IMMUTABLE)
+
+```python
+class AuditLog(models.Model):
+    entity_type = models.CharField(max_length=50)   # "task", "workflow", "document", "search"
+    entity_id = models.IntegerField()
+    action = models.CharField(max_length=200)        # "created", "status_change:created→assigned"
+    details = models.JSONField(default=dict, blank=True)
+    performed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-timestamp"]
+        indexes = [
+            models.Index(fields=["entity_type", "entity_id"]),
+            models.Index(fields=["-timestamp"]),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValueError("AuditLog entries are immutable.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValueError("AuditLog entries cannot be deleted.")
+```
+
+### Workflow + Task (tenant schema)
 
 ```python
 class Workflow(models.Model):
-    """A business process template. E.g., 'Patient Intake', 'Referral Processing'."""
     name = models.CharField(max_length=200)
     description = models.TextField(blank=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
@@ -197,26 +262,22 @@ class Workflow(models.Model):
     modified_at = models.DateTimeField(auto_now=True)
 
 class Task(models.Model):
-    """A task within a workflow. Has a state machine for tracking progress."""
     STATUS_CHOICES = [
-        ("created", "Created"),
-        ("assigned", "Assigned"),
-        ("in_progress", "In Progress"),
-        ("completed", "Completed"),
+        ("created", "Created"), ("assigned", "Assigned"),
+        ("in_progress", "In Progress"), ("completed", "Completed"),
         ("cancelled", "Cancelled"),
     ]
     VALID_TRANSITIONS = {
         "created": ["assigned", "cancelled"],
         "assigned": ["in_progress", "cancelled"],
         "in_progress": ["completed", "cancelled"],
-        "completed": [],
-        "cancelled": [],
+        "completed": [],    # Terminal
+        "cancelled": [],    # Terminal
     }
-
     workflow = models.ForeignKey(Workflow, on_delete=models.CASCADE, related_name="tasks")
     title = models.CharField(max_length=300)
     description = models.TextField(blank=True)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="created")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="created", db_index=True)
     assigned_to = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="assigned_tasks")
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="created_tasks")
     due_date = models.DateTimeField(null=True, blank=True)
@@ -224,47 +285,66 @@ class Task(models.Model):
     modified_at = models.DateTimeField(auto_now=True)
 
     def transition_to(self, new_status, user):
-        """Enforces valid state transitions and logs the change."""
         if new_status not in self.VALID_TRANSITIONS.get(self.status, []):
             raise ValueError(f"Cannot transition from {self.status} to {new_status}")
         old_status = self.status
         self.status = new_status
         self.save()
         AuditLog.objects.create(
-            entity_type="task",
-            entity_id=self.id,
+            entity_type="task", entity_id=self.id,
             action=f"status_change:{old_status}→{new_status}",
             performed_by=user,
         )
-```
-
-### AuditLog (tenant schema)
-
-```python
-class AuditLog(models.Model):
-    """Tracks every mutation. Health-tech companies expect this."""
-    entity_type = models.CharField(max_length=50)  # "task", "workflow", "document"
-    entity_id = models.IntegerField()
-    action = models.CharField(max_length=200)       # "created", "status_change:created→assigned"
-    details = models.JSONField(default=dict, blank=True)
-    performed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
-    timestamp = models.DateTimeField(auto_now_add=True)
 ```
 
 ### Document (tenant schema)
 
 ```python
 class Document(models.Model):
-    """Files stored in S3, linked to workflows/tasks."""
     name = models.CharField(max_length=300)
-    s3_key = models.CharField(max_length=500)       # S3 object key
+    s3_key = models.CharField(max_length=500)        # {tenant_schema}/{uuid}/{filename}
     content_type = models.CharField(max_length=100)
     size_bytes = models.IntegerField()
-    summary = models.TextField(blank=True)           # LLM-generated summary
+    summary = models.TextField(blank=True)            # LLM-generated, strip_tags before storage
     workflow = models.ForeignKey(Workflow, null=True, blank=True, on_delete=models.SET_NULL)
     task = models.ForeignKey(Task, null=True, blank=True, on_delete=models.SET_NULL)
     uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     created_at = models.DateTimeField(auto_now_add=True)
+```
+
+### SearchHistory (tenant schema)
+
+```python
+class SearchHistory(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    query = models.TextField()
+    summary = models.TextField(blank=True)
+    trials_data = models.JSONField(default=list)     # [{nct_id, title, status, summary}]
+    papers_data = models.JSONField(default=list)     # [{pmid, title, authors, journal, pub_date}]
+    created_at = models.DateTimeField(auto_now_add=True)
+    class Meta: ordering = ["-created_at"]
+```
+
+### ChatThread + ChatMessage (tenant schema)
+
+```python
+class ChatThread(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    title = models.CharField(max_length=200, blank=True)
+    trials_context = models.JSONField(default=list)   # Cached trials for conversation
+    papers_context = models.JSONField(default=list)   # Cached papers for conversation
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    class Meta: ordering = ["-updated_at"]
+
+class ChatMessage(models.Model):
+    ROLE_CHOICES = [("user", "User"), ("assistant", "Assistant")]
+    thread = models.ForeignKey(ChatThread, on_delete=models.CASCADE, related_name="messages")
+    role = models.CharField(max_length=10, choices=ROLE_CHOICES)
+    content = models.TextField()
+    sources_used = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    class Meta: ordering = ["created_at"]
 ```
 
 ---
@@ -275,179 +355,217 @@ class Document(models.Model):
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| POST | `/api/auth/login` | None | Login with email + password, returns session |
-| POST | `/api/auth/register` | None | Register new user (public tenant only) |
-| POST | `/api/auth/logout` | Session | End session |
-| GET | `/api/auth/me` | Session | Current user info + tenant + role |
+| POST | `/api/auth/register` | None | Register with email + password + name. Returns 201. |
+| POST | `/api/auth/login` | None | Login with email + password. Sets session. Returns user + tenant name. |
+| POST | `/api/auth/logout` | Session | End session. Clears recent_actions from session. |
+| GET | `/api/auth/me` | Session | Current user info + tenant name. |
+| POST | `/api/auth/reset-password` | Session | Reset password (min 8 chars). Clears must_reset_password flag. |
 
-### Tenants (`/api/tenants/`) — public schema only
-
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| POST | `/api/tenants/` | Session (authenticated user) | Create new clinic tenant (user becomes admin) |
-| GET | `/api/tenants/` | Superadmin | List all tenants |
-
-### Staff (`/api/staff/`) — tenant schema
+### Tenants (`/api/tenants/`)
 
 | Method | Path | Auth | Role | Description |
 |---|---|---|---|---|
-| GET | `/api/staff/` | Session | Admin | List staff in this tenant |
-| POST | `/api/staff/invite` | Session | Admin | Add a user to this tenant (by email) |
-| DELETE | `/api/staff/{id}` | Session | Admin | Remove staff from tenant |
+| POST | `/api/tenants/` | Session | Any | Create clinic tenant. Validates subdomain format + reserved names. Uses provision_tenant(). |
+| GET | `/api/tenants/` | Session | Superadmin | List all tenants (excludes public). |
 
-### Workflows (`/api/workflows/`) — tenant schema
-
-| Method | Path | Auth | Role | Description |
-|---|---|---|---|---|
-| GET | `/api/workflows/` | Session | Any | List all workflows |
-| POST | `/api/workflows/` | Session | Admin | Create workflow |
-| GET | `/api/workflows/{id}` | Session | Any | Get workflow with tasks |
-| PUT | `/api/workflows/{id}` | Session | Admin | Update workflow |
-| DELETE | `/api/workflows/{id}` | Session | Admin | Delete workflow |
-| POST | `/api/workflows/{id}/generate-tasks` | Session | Admin | **LLM endpoint**: send workflow description to Lambda, auto-generate task checklist |
-
-### Tasks (`/api/tasks/`) — tenant schema
+### Staff (`/api/staff/`)
 
 | Method | Path | Auth | Role | Description |
 |---|---|---|---|---|
-| GET | `/api/tasks/` | Session | Any | List tasks (filterable by status, assigned_to) |
-| POST | `/api/tasks/` | Session | Admin | Create task in a workflow |
-| GET | `/api/tasks/{id}` | Session | Any | Get task detail |
-| PUT | `/api/tasks/{id}` | Session | Admin | Update task |
-| POST | `/api/tasks/{id}/transition` | Session | Any | Change task status (state machine enforced) |
-| POST | `/api/tasks/{id}/assign` | Session | Admin | Assign task to staff member |
+| GET | `/api/staff/` | Session | Admin | List staff in current tenant. |
+| POST | `/api/staff/invite` | Session | Admin | Add user by email. Creates account if new (must_reset_password=True). |
+| DELETE | `/api/staff/{id}` | Session | Admin | Remove staff from tenant (not global delete). Cannot remove owner. |
 
-### Documents (`/api/documents/`) — tenant schema
+### Workflows (`/api/workflows/`)
+
+| Method | Path | Auth | Role | Description |
+|---|---|---|---|---|
+| GET | `/api/workflows/` | Session | Any | List workflows (30s cache). |
+| POST | `/api/workflows/` | Session | Admin | Create workflow. AuditLog. Cache invalidation. |
+| GET | `/api/workflows/{id}` | Session | Any | Get workflow with nested tasks. |
+| PUT | `/api/workflows/{id}` | Session | Admin | Update workflow. AuditLog. |
+| DELETE | `/api/workflows/{id}` | Session | Admin | Delete workflow. AuditLog. |
+| POST | `/api/workflows/{id}/generate-tasks` | Session | Admin | AI generates tasks via Claude Haiku. K-shot + reflexion. 1hr cache. |
+
+### Tasks (`/api/tasks/`)
+
+| Method | Path | Auth | Role | Description |
+|---|---|---|---|---|
+| GET | `/api/tasks/` | Session | Any | List tasks. Filterable by status, assigned_to. |
+| POST | `/api/tasks/` | Session | Admin | Create task. AuditLog. |
+| GET | `/api/tasks/{id}` | Session | Any | Get task detail. |
+| PUT | `/api/tasks/{id}` | Session | Admin | Update task. AuditLog. |
+| POST | `/api/tasks/{id}/transition` | Session | Any | Change status. VALID_TRANSITIONS enforced. AuditLog. |
+| POST | `/api/tasks/{id}/assign` | Session | Admin | Assign to user. Validates user belongs to tenant. AuditLog. |
+
+### Documents (`/api/documents/`)
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/api/documents/` | Session | List documents |
-| POST | `/api/documents/upload-url` | Session | Get S3 presigned upload URL |
-| POST | `/api/documents/` | Session | Register uploaded document (after S3 upload completes) |
-| GET | `/api/documents/{id}/download-url` | Session | Get S3 presigned download URL |
-| POST | `/api/documents/{id}/summarize` | Session | **LLM endpoint**: invoke Lambda to summarize document text |
-| DELETE | `/api/documents/{id}` | Session | Delete document (S3 + DB) |
+| GET | `/api/documents/` | Session | List documents. Filterable by workflow_id, task_id. |
+| POST | `/api/documents/upload-url` | Session | Get S3 presigned PUT URL (900s expiry). Validates content_type. |
+| POST | `/api/documents/` | Session | Register document after S3 upload. Validates S3 key tenant prefix. |
+| GET | `/api/documents/{id}/download-url` | Session | Get S3 presigned GET URL (900s). Validates tenant prefix. 14min cache. |
+| POST | `/api/documents/{id}/summarize` | Session | AI summarize via Claude Haiku. Chain-of-Thought. 24hr cache. |
+| DELETE | `/api/documents/{id}` | Session (Admin) | Delete S3 object + DB record. AuditLog. |
 
-### Dashboard (`/api/dashboard/`) — tenant schema
+### Dashboard (`/api/dashboard/`)
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/api/dashboard/stats` | Session | Counts: total workflows, tasks by status, documents, staff |
+| GET | `/api/dashboard/stats` | Session | Counts: workflows, documents, staff, searches, tasks_by_status, recent_actions. 60s cache. |
+
+### Search (`/api/search/`)
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/api/search/` | Session | Search ClinicalTrials.gov + PubMed, AI summarize (RAG). Saves to SearchHistory. |
+| GET | `/api/search/history` | Session | User's past searches (max 20). |
+| POST | `/api/search/chat` | Session | Send message in clinical QA chat. Auto-searches when needed. |
+| GET | `/api/search/chat/threads` | Session | User's chat threads (max 20). |
+| GET | `/api/search/chat/{id}` | Session | Get all messages in a thread. |
 
 ---
 
-## AWS Integration
+## Clinical QA Search (RAG Pipeline)
 
-### AWS Free Tier Setup (do this BEFORE building)
+### How It Works
 
-Create a free AWS account at https://aws.amazon.com/free/. All services used are within the free tier:
+```
+User types: "Phase 3 trials for metformin in Type 2 diabetes"
+  ↓
+Query rewriting: expand abbreviations (T2DM→type 2 diabetes mellitus), add MeSH synonyms
+  ↓
+Parallel fetch (asyncio.gather with httpx):
+  - ClinicalTrials.gov API v2: GET /api/v2/studies?query.term={query}&pageSize=10
+  - PubMed E-utilities: esearch (get PMIDs) → esummary (get details)
+  ↓
+Format context with [NCT...] and [PMID:...] citations
+  ↓
+Claude Haiku RAG summarization (temperature 0.2):
+  - OVERVIEW: 1-2 sentences
+  - TRIALS: grouped by status (Recruiting/Active/Completed)
+  - RESEARCH: 3-5 key findings from papers
+  - BOTTOM LINE: 1 sentence takeaway
+  ↓
+Save to SearchHistory (per user, per tenant)
+```
 
-| Service | Free Tier | Our Usage |
-|---|---|---|
-| S3 | 5 GB storage, 20K GET, 2K PUT/month (12 months) | A few demo files |
-| Lambda | 1M requests, 400K GB-seconds/month (always free) | A few LLM calls |
-| IAM | Always free | 1 user for credentials |
+### External APIs (free, no keys needed)
 
-**Step-by-step AWS setup:**
+**ClinicalTrials.gov v2:**
+```
+GET https://clinicaltrials.gov/api/v2/studies?query.term={query}&pageSize=10
+Response: { "studies": [{ "protocolSection": { "identificationModule": { "nctId", "briefTitle" }, "statusModule": { "overallStatus" }, "descriptionModule": { "briefSummary" } } }] }
+```
 
-1. **Create S3 bucket:**
-   - Go to S3 console → Create bucket
-   - Name: `clinic-portal-docs` (or any unique name)
-   - Region: `us-east-1`
-   - Enable "Server-side encryption" (SSE-S3, AES-256)
-   - Block all public access: ON (we use presigned URLs, not public files)
+**PubMed NCBI E-utilities:**
+```
+Step 1: GET https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term={query}&retmax=10&retmode=json
+Step 2: GET https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id={comma_ids}&retmode=json
+```
 
-2. **Create Lambda function:**
-   - Go to Lambda console → Create function
-   - Name: `clinic-portal-summarize`
-   - Runtime: Python 3.12
-   - Paste code from `lambdas/summarize/handler.py`
-   - Add environment variable: `OPENAI_API_KEY=sk-...`
-   - Add a Lambda Layer for the `openai` package (or zip it with deps)
-   - Memory: 256 MB, Timeout: 30 seconds
-   - Copy the function ARN (e.g. `arn:aws:lambda:us-east-1:123456:function:clinic-portal-summarize`)
+### Conversational Chat
 
-3. **Create IAM user for app credentials:**
-   - Go to IAM console → Users → Create user
-   - Name: `clinic-portal-app`
-   - Attach policies: `AmazonS3FullAccess`, `AWSLambda_FullAccess`
-   - Create access key → copy `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`
+Multi-turn conversations with clinical search context:
+- Thread stores trials_context + papers_context as JSON
+- AI detects when new search is needed (triggers: "search for", "find", "what about", "compare with")
+- Follow-up questions use existing context (no new search)
+- Conversation history (last 10 messages) sent to Claude
+- Citations auto-linked in frontend: [NCT...] → clinicaltrials.gov, [PMID:...] → pubmed.ncbi.nlm.nih.gov
 
-4. **Put credentials in `.env` file** (never commit this):
-   ```env
-   AWS_ACCESS_KEY_ID=AKIA...
-   AWS_SECRET_ACCESS_KEY=...
-   AWS_S3_BUCKET=clinic-portal-docs
-   AWS_REGION=us-east-1
-   LAMBDA_SUMMARIZE_ARN=arn:aws:lambda:us-east-1:123456:function:clinic-portal-summarize
-   OPENAI_API_KEY=sk-...
-   ```
+---
 
-### S3 — Document Storage
+## Redis Caching (tenant-aware via make_key)
 
-Use **presigned URLs** (not server-proxied uploads):
+| What | TTL | Key Pattern | Invalidated On |
+|---|---|---|---|
+| Dashboard stats | 60s | `dashboard:stats` | Workflow/task/document CRUD |
+| Workflow list | 30s | `workflows:list` | Workflow create/update/delete |
+| S3 download URLs | 14 min (840s) | `s3:download:{doc_id}` | Document delete |
+| LLM summaries | 24 hr | `llm:summary:{doc_id}` | Re-summarize |
+| LLM generated tasks | 1 hr | `llm:tasks:{workflow_id}:{hash}` | — |
+| Clinical trials | 6 hr | `search:trials:{query_hash}` | fresh=True |
+| PubMed papers | 7 days | `search:papers:{query_hash}` | fresh=True |
+| Query rewrites | 24 hr | `search:rewrite:{query_hash}` | — |
 
-1. Frontend calls `POST /api/documents/upload-url` with filename + content type
-2. Backend generates presigned POST via `boto3.client('s3').generate_presigned_post()`
-3. Frontend uploads directly to S3 using the presigned URL
-4. Frontend calls `POST /api/documents/` with the S3 key to register the document in DB
+---
 
-Config:
+## LLM Prompt Engineering
+
+### Summarization Prompt (temperature 0.2)
+
+Includes `<system-reminder>` tags, Chain-of-Thought (Step 1-3 with `<reasoning>` block stripped before storage), 500-word max with truncation, empty check returns "Summary unavailable".
+
+### Task Generation Prompt (temperature 0.5)
+
+Includes `<system-reminder>` tags, 2 k-shot examples (patient check-in, lab results), JSON validation, reflexion retry on invalid JSON (max 1 retry), 3-8 tasks required.
+
+### Clinical QA Prompt (temperature 0.2)
+
+RAG prompt: ONLY use provided context, cite every claim with [NCT...] or [PMID:...], structured as OVERVIEW/TRIALS/RESEARCH/BOTTOM LINE, plain text only (no markdown), max 250 words.
+
+### Output Validation (ALL LLM output)
+
+- `strip_tags()` before storage (treat LLM output as untrusted)
+- JSON validation for task generation (parse, validate structure)
+- Length check (500 words max, truncate with "... [summary truncated]")
+- Empty check (return "Summary unavailable", never store empty string)
+- Reflexion: retry once with error context if validation fails
+
+---
+
+## Session Memory
+
+**Temporary (session-scoped):**
+- `request.session["recent_actions"]`: last 5 user actions, each with {action, entity_type, entity_name, entity_id, timestamp}
+- Tracked on: workflow/task/document CRUD, staff invite/remove, search, chat
+- Shown on dashboard via `/api/dashboard/stats` response
+- Cleared on logout
+
+**Permanent (DB-scoped):**
+- AuditLog: tracks ALL mutations (immutable, no update/delete)
+- SearchHistory: all clinical searches per user
+- ChatThread + ChatMessage: full conversation history
+
+---
+
+## Observability (10 Logging Points)
+
+Every app logs at INFO level with `logger = logging.getLogger(__name__)`:
+
+1. Function entry with params
+2. Function exit with result summary
+3. Errors with `exc_info=True`
+4. External API calls (S3 operations, LLM invocations, httpx calls)
+5. State mutations (task transitions with old→new status)
+6. Security events (login success/failure, logout)
+7. Business milestones (tenant created, workflow completed)
+8. Performance warnings (query > 500ms)
+9. Validation failures (invalid transitions, bad content types)
+10. Resource limits (cache misses)
+
+**NEVER log:** passwords, API keys, session tokens, PII (email OK in auth logs only).
+
+---
+
+## Error Handling
+
+Every external call (S3, Lambda, httpx, Claude API) MUST have:
 ```python
-AWS_STORAGE_BUCKET_NAME = env("AWS_S3_BUCKET", "clinic-portal-docs")
-AWS_S3_REGION_NAME = env("AWS_REGION", "us-east-1")
-AWS_S3_ENCRYPTION = "AES256"  # Server-side encryption
+try:
+    result = external_call(...)
+except botocore.exceptions.ClientError as e:
+    logger.warning("AWS error: %s", e)
+    return graceful_fallback
+except (ReadTimeoutError, ConnectTimeoutError):
+    logger.warning("Timeout")
+    return graceful_fallback
+except NoCredentialsError:
+    logger.error("Credentials not configured")
+    return graceful_fallback
 ```
-
-S3 bucket structure:
-```
-clinic-portal-docs/
-  {tenant_schema_name}/
-    {uuid}/{original_filename}
-```
-
-### Lambda — LLM Summarization
-
-**Lambda function** (`lambdas/summarize/handler.py`):
-- Input: `{"text": "...", "task_type": "summarize_document" | "generate_tasks"}`
-- Calls OpenAI API (or AWS Bedrock)
-- Output: `{"summary": "..."}` or `{"tasks": [{"title": "...", "description": "..."}, ...]}`
-
-**Invocation from Django** (via boto3):
-```python
-import boto3, json
-
-lambda_client = boto3.client("lambda")
-
-def invoke_summarize(text: str) -> str:
-    response = lambda_client.invoke(
-        FunctionName=env("LAMBDA_SUMMARIZE_ARN"),
-        InvocationType="RequestResponse",
-        Payload=json.dumps({"text": text, "task_type": "summarize_document"}),
-    )
-    result = json.loads(response["Payload"].read())
-    return result["summary"]
-
-def invoke_generate_tasks(workflow_description: str) -> list[dict]:
-    response = lambda_client.invoke(
-        FunctionName=env("LAMBDA_SUMMARIZE_ARN"),
-        InvocationType="RequestResponse",
-        Payload=json.dumps({"text": workflow_description, "task_type": "generate_tasks"}),
-    )
-    result = json.loads(response["Payload"].read())
-    return result["tasks"]
-```
-
-### S3 Client Setup
-
-```python
-s3_client = boto3.client(
-    "s3",
-    region_name=env("AWS_REGION", "us-east-1"),
-    aws_access_key_id=env("AWS_ACCESS_KEY_ID"),
-    aws_secret_access_key=env("AWS_SECRET_ACCESS_KEY"),
-)
-```
+Never let exceptions propagate to the user. Always return structured JSON errors.
 
 ---
 
@@ -457,56 +575,58 @@ s3_client = boto3.client(
 services:
   db:
     image: postgres:15
+    ports: ["5433:5432"]
     environment:
       POSTGRES_DB: clinic_portal
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
+    volumes: [pgdata:/var/lib/postgresql/data]
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    ports: ["6379:6379"]
 
   web:
     build: .
     command: >
-      sh -c "python manage.py migrate_schemas --shared &&
-             python manage.py migrate_schemas --tenant &&
-             python manage.py runserver 0.0.0.0:8000"
+      sh -c "uv run python manage.py migrate_schemas --shared &&
+             uv run python manage.py migrate_schemas --tenant &&
+             uv run python manage.py runserver 0.0.0.0:8000"
     env_file: .env
-    environment:
-      DATABASE_URL: postgres://postgres:postgres@db:5432/clinic_portal
-      REDIS_URL: redis://redis:6379/0
-    ports:
-      - "8000:8000"
-    depends_on:
-      - db
-      - redis
-    volumes:
-      - .:/app
+    ports: ["8000:8000"]
+    depends_on: [db, redis]
+    volumes: [".:/app"]
 
 volumes:
   pgdata:
 ```
 
-**`.env` file** (never commit this):
-```env
-AWS_ACCESS_KEY_ID=AKIA...
+## Environment Variables (.env)
+
+```
+DB_NAME=clinic_portal
+DB_USER=postgres
+DB_PASSWORD=postgres
+DB_HOST=localhost
+DB_PORT=5433
+REDIS_URL=redis://localhost:6379/0
+SECRET_KEY=<generate-a-real-key>
+DEBUG=True
+ALLOWED_HOSTS=localhost,portal.localhost,clinic1.localhost,clinic2.localhost
+TENANT_USERS_DOMAIN=localhost
+AWS_ACCESS_KEY_ID=...
 AWS_SECRET_ACCESS_KEY=...
 AWS_S3_BUCKET=clinic-portal-docs
 AWS_REGION=us-east-1
-LAMBDA_SUMMARIZE_ARN=arn:aws:lambda:us-east-1:123456:function:clinic-portal-summarize
-OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+LLM_MODEL=claude-haiku-4-5-20251001
+LAMBDA_SUMMARIZE_ARN=              # Empty = direct Claude API calls (no Lambda needed)
 ```
 
 ## Local Development Setup
 
 ```bash
-# 1. Add to /etc/hosts (required for subdomain-based multi-tenancy)
+# 1. Add to /etc/hosts
 echo "127.0.0.1 portal.localhost clinic1.localhost clinic2.localhost" | sudo tee -a /etc/hosts
 
 # 2. Start services
@@ -516,332 +636,60 @@ docker compose up -d db redis
 uv sync
 
 # 4. Run migrations
-python manage.py migrate_schemas --shared
-python manage.py migrate_schemas --tenant
+uv run python manage.py migrate_schemas --shared
+uv run python manage.py migrate_schemas --tenant
 
-# 5. Create public tenant + superadmin
-python manage.py create_public_tenant
+# 5. Create public tenant + seed demo data
+uv run python manage.py create_public_tenant
+uv run python manage.py seed_demo
 
 # 6. Run dev server
-python manage.py runserver
+uv run python manage.py runserver
+
+# 7. Open browser
+# Portal:  http://portal.localhost:8000/
+# Clinic:  http://clinic1.localhost:8000/login/
+# Login:   admin@portal.localhost / admin123
 ```
-
-## Security
-
-- CSRF protection enabled on all mutating endpoints
-- Session auth via Redis (not cookies with secrets)
-- `TenantAccessMiddleware` blocks users from accessing tenants they don't belong to
-- S3 objects namespaced by tenant schema name — no cross-tenant file access
-- Presigned URLs expire after 15 minutes
-- All models have `created_by` / `modified_at` for audit
-- AuditLog tracks every state change
-- Environment variables for all secrets (no hardcoded keys)
-- SSL-ready: set `SECURE_SSL_REDIRECT = True` and `SESSION_COOKIE_SECURE = True` for production
-
-## Frontend (minimal — backend is the priority)
-
-Server-rendered Django templates with vanilla JS:
-
-1. **Landing page** (public tenant): Logo, "Create your clinic workspace" signup form, login link
-2. **Login page**: Email + password form
-3. **Dashboard**: Stats cards (workflows, tasks, documents, staff count)
-4. **Workflows page**: List workflows, create new, click into workflow to see tasks
-5. **Workflow detail**: Task list with status badges, assign button, transition buttons (state machine), "Generate Tasks with AI" button
-6. **Documents page**: Upload button, file list, "Summarize" button per document
-7. **Staff page** (admin only): List staff, invite by email, remove
-
-Use a simple CSS framework (Pico CSS or similar) for clean styling without a build step.
 
 ## Seed Data
 
-The `seed_demo.py` script should:
-1. Create a public tenant with domain `portal.localhost`
-2. Create a superadmin user
-3. Create a demo clinic tenant "Sunrise Clinic" with domain `clinic1.localhost`
-4. Add 2 staff users to the clinic
-5. Create a sample workflow "Patient Intake" with 4 tasks in various states
-6. Create a sample document
+The `seed_demo.py` script creates (idempotent):
+1. Public tenant with domain `portal.localhost`
+2. Superadmin: `admin@portal.localhost` / `admin123`
+3. Demo clinic "Sunrise Clinic" with domain `clinic1.localhost`
+4. Staff: `staff1@clinic1.localhost` / `staff123` (Alice Johnson)
+5. Staff: `staff2@clinic1.localhost` / `staff123` (Bob Smith)
+6. Workflow "Patient Intake" with 4 tasks (created, assigned, in_progress, completed)
+7. Sample document "Intake Form Template.pdf"
+8. AuditLog entries for all mutations
 
-## Intelligent Backend Patterns (MUST implement all)
+## Frontend (Django templates + vanilla JS + Pico CSS)
 
-### Pre-Work Context Calls (from Claude Code internals — "Peeking Under the Hood" article)
-Before any LLM call (summarization or task generation), run 2 preparatory steps:
-1. **Context summary call**: Summarize what the user has been doing in this session (last 3 actions from AuditLog) — inject as context into the LLM prompt so the summary is contextually relevant
-2. **Query classification call**: Classify the request type ("summarize_document" vs "generate_tasks" vs "unknown") — route to the correct prompt template. Do NOT use the same prompt for both.
+| Page | URL | Description |
+|---|---|---|
+| Landing | `portal.localhost/` | Public signup + login links |
+| Login | `*/login/` | Email + password form, fetch() to API |
+| Register | `*/register/` | Name + email + password form |
+| Dashboard | `clinic.*/` | Stats cards, task breakdown, recent actions |
+| Workflows | `clinic.*/workflows/` | CRUD, task list with status badges, AI generate |
+| Documents | `clinic.*/documents/` | Upload via presigned URL, download, summarize |
+| Staff | `clinic.*/staff/` | Invite by email, remove (admin only) |
+| Search | `clinic.*/search/` | Clinical QA: query → trials + papers + AI summary |
+| Chat | `clinic.*/chat/` | Conversational clinical QA with thread sidebar |
 
-### Redis Caching (MUST use — Redis is already running)
-Cache these with tenant-aware keys (`django_tenants.cache.make_key`):
+Navigation bar shows: Dashboard, Workflows, Documents, Search, Chat, Staff (admin only).
+All templates extend `base.html` with Pico CSS CDN + `static/app.js` (CSRF helper, apiFetch wrapper).
 
-| What to Cache | TTL | Key Pattern | Why |
-|---|---|---|---|
-| Dashboard stats | 60 seconds | `dashboard:stats` | Avoids 4 DB queries on every page load |
-| Workflow list | 30 seconds | `workflows:list` | Frequently accessed, rarely changes |
-| S3 presigned download URLs | 14 minutes | `s3:download:{doc_id}` | Presigned URLs expire in 15 min, cache for 14 |
-| LLM summarization results | 24 hours | `llm:summary:{doc_id}` | Same document = same summary, expensive to re-generate |
-| LLM generated tasks | 1 hour | `llm:tasks:{workflow_id}:{hash}` | Same description = same tasks |
-| User session data | 30 minutes | handled by SESSION_ENGINE | Already configured via Redis session backend |
+## Testing
 
-Cache invalidation: invalidate on mutations (create/update/delete) using Django signals or explicit `cache.delete()` in service functions.
-
-### Memory Patterns
-
-**Temporary memory (session-scoped):**
-- Store user's last 5 actions in the session: `request.session["recent_actions"] = [...]`
-- Use this to personalize dashboard: "You last worked on Patient Intake workflow"
-- Cleared on logout
-
-**Permanent memory (DB-scoped):**
-- AuditLog already tracks all mutations — use it for "activity feed" on dashboard
-- Store user preferences per tenant in a `UserPreference` model (optional — future enhancement)
-
-### LLM Prompt Engineering (for Lambda handler)
-
-**Temperature:** 0.2 for summarization (deterministic, factual), 0.5 for task generation (slightly creative)
-
-**Summarization prompt MUST include:**
-```
-<system-reminder>
-You are summarizing a document for a medical clinic staff member.
-- Summarize ONLY what is in the document — do NOT add information from your training data
-- Keep the summary under 200 words
-- Use plain language — avoid medical jargon unless it's in the document
-- Structure: 1-2 sentence overview, then key points as bullets
-- If the document is too short to summarize meaningfully, say so
-</system-reminder>
-```
-
-**Task generation prompt MUST include:**
-```
-<system-reminder>
-You are generating a task checklist for a clinic workflow.
-- Generate 3-8 tasks (not more, not fewer)
-- Each task must be a concrete, actionable step (not vague like "do the thing")
-- Tasks should be in logical order (dependencies first)
-- Each task needs a title (under 100 chars) and a description (1-2 sentences)
-- Output ONLY valid JSON: {"tasks": [{"title": "...", "description": "..."}, ...]}
-- Do NOT include tasks outside the workflow's scope
-</system-reminder>
-```
-
-**K-shot examples in prompts (Week 1 pattern):**
-Include 2 examples in each prompt to stabilize output format:
-```
-Example 1:
-Input: "Patient check-in process at front desk"
-Output: {"tasks": [{"title": "Greet patient and verify appointment", "description": "Confirm patient name, appointment time, and provider."}, ...]}
-
-Example 2:
-Input: "Lab result review workflow"
-Output: {"tasks": [{"title": "Retrieve lab results from portal", "description": "Log into lab portal and download latest results for the patient."}, ...]}
-```
-
-### LLM Output Validation (MUST implement)
-- **Sanitize**: `strip_tags()` on ALL LLM output before storing in DB — treat as untrusted input
-- **Validate JSON**: For task generation, parse the JSON response. If invalid JSON, retry once. If still invalid, return error "AI could not generate tasks — try rephrasing the workflow description"
-- **Length check**: If summary > 500 words, truncate with "... [summary truncated]"
-- **Empty check**: If LLM returns empty or just whitespace, return "Summary unavailable" — never store empty string
-
-### Reflexion Pattern for LLM (Week 1)
-If LLM output fails validation:
-1. First attempt: standard prompt
-2. If fails validation → add the error to the prompt: "Your previous response was invalid because [reason]. Try again."
-3. If fails again → return graceful error to user
-Max 2 retries per LLM call.
-
-### Chain-of-Thought for Summarization (Week 1)
-The summarization prompt should instruct the LLM to reason before summarizing:
-```
-Step 1: Identify the document type (report, form, notes, letter)
-Step 2: Extract the 3-5 most important facts
-Step 3: Write a concise summary based on those facts
-
-<reasoning>
-[Your analysis here — this will be stripped before storing]
-</reasoning>
-
-Summary: [Your final summary here — this is what gets stored]
-```
-Parse out the `<reasoning>` block — store only the Summary portion.
-
-### Error Handling on ALL External Calls
-Every call to S3 or Lambda MUST have:
-```python
-try:
-    result = boto3_call(...)
-except botocore.exceptions.ClientError as e:
-    logger.warning(f"AWS error: {e.response['Error']['Code']}: {e.response['Error']['Message']}")
-    return graceful_fallback
-except (botocore.exceptions.ReadTimeoutError, botocore.exceptions.ConnectTimeoutError):
-    logger.warning(f"AWS timeout on {operation}")
-    return graceful_fallback
-except botocore.exceptions.NoCredentialsError:
-    logger.error("AWS credentials not configured")
-    return graceful_fallback
-```
-Never let boto3 exceptions propagate to the user. Always return a structured error response.
-
-### Observability (10 Logging Points — Steve's SDLC)
-Every app MUST log at INFO level:
-1. **Function entry**: `logger.info(f"{func_name} called: {params}")`
-2. **Function exit**: `logger.info(f"{func_name} returned: {result_summary}")`
-3. **Errors**: `logger.error(f"{func_name} failed: {error}", exc_info=True)`
-4. **External API calls**: `logger.info(f"S3 {operation}: {key}")` / `logger.info(f"Lambda invoke: {task_type}")`
-5. **State mutations**: `logger.info(f"Task {id} transitioned: {old} → {new} by {user}")`
-6. **Security events**: `logger.info(f"Login: {email}")` / `logger.warning(f"Failed login: {email}")`
-7. **Business milestones**: `logger.info(f"Tenant created: {name}")` / `logger.info(f"Workflow completed: {id}")`
-8. **Performance**: `logger.warning(f"Slow query: {ms}ms")` if any DB query > 500ms
-9. **Validation failures**: `logger.warning(f"Invalid transition: {old} → {new}")`
-10. **Resource limits**: `logger.warning(f"Cache miss rate high: {rate}%")`
-
-Never log: passwords, API keys, session tokens, PII (email is OK for auth logs but not in other contexts).
-
-### AWS Bedrock Integration (replaces OpenAI)
-The Lambda handler uses **AWS Bedrock** with Claude 3.5 Haiku — NOT OpenAI:
-```python
-import boto3
-import json
-
-bedrock = boto3.client("bedrock-runtime", region_name="us-east-1")
-
-def invoke_claude(prompt: str, max_tokens: int = 1024, temperature: float = 0.2) -> str:
-    response = bedrock.invoke_model(
-        modelId="us.anthropic.claude-3-5-haiku-20241022-v1:0",
-        contentType="application/json",
-        accept="application/json",
-        body=json.dumps({
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "messages": [{"role": "user", "content": prompt}]
-        })
-    )
-    result = json.loads(response["body"].read())
-    return result["content"][0]["text"]
-```
-
-Environment variable needed: `AWS_BEARER_TOKEN_BEDROCK` (Bedrock API key, expires April 4, 2026).
-Model: `us.anthropic.claude-3-5-haiku-20241022-v1:0` (inference profile ID).
-
-## Clinical QA Search (the "QA system" feature)
-
-This is the clinical question-answering feature that makes this a "clinical QA system" — staff can search real medical databases and get AI-summarized answers.
-
-### How It Works
-```
-Staff types: "Phase 3 trials for metformin in Type 2 diabetes"
-    ↓
-App queries clinicaltrials.gov + PubMed in PARALLEL (asyncio.gather)
-    ↓
-Results formatted with source IDs (NCT IDs, PMIDs)
-    ↓
-Bedrock Claude 3.5 Haiku summarizes with citations
-    ↓
-Staff sees: AI summary + trial list + paper list
-    ↓
-Search saved to history (per tenant)
-```
-
-### New Model: SearchHistory (tenant schema)
-```python
-class SearchHistory(models.Model):
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    query = models.TextField()
-    summary = models.TextField(blank=True)
-    trials_data = models.JSONField(default=list)
-    papers_data = models.JSONField(default=list)
-    created_at = models.DateTimeField(auto_now_add=True)
-```
-
-### New Endpoints (tenant schema, under `/api/search/`)
-
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| POST | `/api/search/` | Session | Search clinicaltrials.gov + PubMed, summarize with AI, save to history |
-| GET | `/api/search/history` | Session | List user's past searches (most recent first) |
-
-### POST /api/search/ — Request/Response
-```
-Request:  { "query": "metformin phase 3 diabetes" }
-Response: {
-    "summary": "Based on the available data, there are 4 active Phase 3 trials... [NCT12345678]...",
-    "trials": [
-        {"nct_id": "NCT12345678", "title": "...", "status": "Recruiting", "summary": "..."},
-        ...
-    ],
-    "papers": [
-        {"pmid": "12345", "title": "...", "authors": "...", "journal": "...", "pub_date": "..."},
-        ...
-    ],
-    "search_id": 1
-}
-```
-
-### External APIs (free, no keys needed)
-
-**clinicaltrials.gov v2 API:**
-```
-GET https://clinicaltrials.gov/api/v2/studies?query.term={query}&pageSize=10
-Response: { "studies": [{ "protocolSection": { "identificationModule": { "nctId", "briefTitle" }, "statusModule": { "overallStatus" }, "descriptionModule": { "briefSummary" } } }] }
-```
-
-**PubMed NCBI E-utilities:**
-```
-Step 1: GET https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term={query}&retmax=10&retmode=json
-Returns: { "esearchresult": { "idlist": ["12345", ...] } }
-
-Step 2: GET https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id={comma_ids}&retmode=json
-Returns: { "result": { "12345": { "title", "authors": [{ "name" }], "source", "pubdate" } } }
-```
-
-### RAG Pattern (Week 1 — MUST implement correctly)
-This IS a RAG pipeline:
-1. **Retrieve**: Fetch from clinicaltrials.gov + PubMed in parallel (httpx.AsyncClient, timeout=10s)
-2. **Format context**: Label trials with NCT IDs, papers with PMIDs, separate sections
-3. **Augmented generation**: Bedrock prompt says "use ONLY the provided context"
-4. **Citations required**: Every claim must reference [NCT...] or [PMID:...]
-5. **"I don't know" pathway**: If no results, say "No clinical trials or papers found for this query"
-6. **Cache**: Redis cache on search results (6hr TTL for trials, 7d for papers)
-
-### Summarization Prompt for Clinical QA
-```
-<system-reminder>
-You are a clinical research assistant summarizing search results.
-- Answer ONLY based on the trials and papers provided below
-- Cite every claim: [NCT...] for trials, [PMID: ...] for papers
-- NEVER make claims not supported by the provided context
-- If insufficient data, say "Based on the available results, there is insufficient data to draw conclusions on [specific aspect]"
-- Structure: Opening (1-2 sentences), Trial Landscape (active/completed/recruiting), Research Findings (key papers), Conclusion
-- Temperature: 0.2 (factual, deterministic)
-</system-reminder>
-
-CONTEXT:
-=== CLINICAL TRIALS (from clinicaltrials.gov) ===
-{formatted_trials_with_nct_ids}
-
-=== RESEARCH PAPERS (from PubMed) ===
-{formatted_papers_with_pmids}
-
-QUERY: {user_query}
-
-Summary:
-```
-
-### New Frontend Page: Clinical Search
-```
-8. **Clinical Search page**: Search input ("Ask a clinical question..."), loading spinner,
-   results: AI summary card (blue-tinted) + two columns (trials list + papers list).
-   Trial status badges: Recruiting=green, Completed=gray, Active=blue.
-   Papers link to PubMed: https://pubmed.ncbi.nlm.nih.gov/{pmid}/
-   Trials link to: https://clinicaltrials.gov/study/{nct_id}
-```
-
-### Implementation Notes
-- Add `apps/search/` as a new TENANT app
-- Add to TENANT_APPS in settings
-- Use `httpx.AsyncClient` for parallel API calls (add httpx to dependencies)
-- Cache search results in Redis with tenant-aware keys
-- The search page is accessible to all authenticated tenant members
-- Add SearchHistory count to dashboard stats
+- **Shared app tests** (tenants, users): use `django.test.TestCase`
+- **Tenant app tests** (workflows, documents, dashboard, search): use `django_tenants.test.cases.TenantTestCase`
+- **E2E tests**: Playwright with Chromium headless
+- Run specific app: `uv run python manage.py test apps.<app_name>`
+- Run all Django: `uv run python manage.py test --noinput`
+- Run E2E: `uv run pytest tests/e2e/ -v`
+- Target: 200+ tests (Django unit + Playwright E2E)
 
 ## What NOT to Build
 
@@ -850,7 +698,7 @@ Summary:
 - No HIPAA/FHIR compliance
 - No payment/billing
 - No email/SMS notifications
-- No Celery (Lambda handles async)
-- No React (Django templates are fine)
+- No Celery (Lambda handles async, or direct Claude API)
+- No React/Vue/Angular (Django templates are fine)
 - No CI/CD pipeline
 - No complex role hierarchy beyond admin/staff
