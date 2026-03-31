@@ -81,56 +81,58 @@ document.getElementById('signup-form').addEventListener('submit', async function
     btn.textContent = 'Creating workspace...';
     btn.disabled = true;
 
-    // Step 1: Register user (or login if already exists)
-    let resp = await apiFetch('/api/auth/register', {
-        method: 'POST',
-        body: JSON.stringify({ email: email, password: password, name: clinicName }),
-    });
-    if (!resp.ok) {
-        const err = await resp.json();
-        // If user exists, try to just login
-        if (resp.status !== 409) {
-            showAlert(err.message || 'Registration failed.', 'error');
-            btn.setAttribute('aria-busy', 'false');
-            btn.textContent = 'Create Workspace';
-            btn.disabled = false;
+    function resetBtn(msg) {
+        showAlert(msg, 'error');
+        btn.setAttribute('aria-busy', 'false');
+        btn.textContent = 'Create Workspace';
+        btn.disabled = false;
+    }
+
+    try {
+        // Step 1: Logout any existing session first
+        await apiFetch('/api/auth/logout', { method: 'POST' }).catch(function(){});
+
+        // Step 2: Register user (or skip if already exists)
+        let resp = await apiFetch('/api/auth/register', {
+            method: 'POST',
+            body: JSON.stringify({ email: email, password: password, name: clinicName }),
+        });
+        if (!resp.ok && resp.status !== 409) {
+            const err = await resp.json();
+            resetBtn(err.message || 'Registration failed.');
             return;
         }
-    }
 
-    // Step 2: Login
-    resp = await apiFetch('/api/auth/login', {
-        method: 'POST',
-        body: JSON.stringify({ email: email, password: password }),
-    });
-    if (!resp.ok) {
-        const err = await resp.json();
-        showAlert(err.message || 'Login failed. Check your password.', 'error');
-        btn.setAttribute('aria-busy', 'false');
-        btn.textContent = 'Create Workspace';
-        btn.disabled = false;
-        return;
-    }
+        // Step 3: Login
+        resp = await apiFetch('/api/auth/login', {
+            method: 'POST',
+            body: JSON.stringify({ email: email, password: password }),
+        });
+        if (!resp.ok) {
+            const err = await resp.json();
+            resetBtn(err.message || 'Login failed. Check your password.');
+            return;
+        }
 
-    // Step 3: Create tenant
-    resp = await apiFetch('/api/tenants/', {
-        method: 'POST',
-        body: JSON.stringify({ name: clinicName, subdomain: subdomain }),
-    });
-    if (!resp.ok) {
-        const err = await resp.json();
-        showAlert(err.message || 'Workspace creation failed.', 'error');
-        btn.setAttribute('aria-busy', 'false');
-        btn.textContent = 'Create Workspace';
-        btn.disabled = false;
-        return;
-    }
+        // Step 4: Create tenant
+        resp = await apiFetch('/api/tenants/', {
+            method: 'POST',
+            body: JSON.stringify({ name: clinicName, subdomain: subdomain }),
+        });
+        if (!resp.ok) {
+            const err = await resp.json();
+            resetBtn(err.message || 'Workspace creation failed.');
+            return;
+        }
 
-    showAlert('Workspace created! Redirecting to ' + clinicName + '...', 'success');
-    const port = window.location.port ? ':' + window.location.port : '';
-    setTimeout(function() {
-        window.location.href = '//' + subdomain + '.localhost' + port + '/';
-    }, 1500);
+        showAlert('Workspace created! Redirecting to ' + clinicName + '...', 'success');
+        const port = window.location.port ? ':' + window.location.port : '';
+        setTimeout(function() {
+            window.location.href = '//' + subdomain + '.localhost' + port + '/';
+        }, 1500);
+    } catch (err) {
+        resetBtn('Something went wrong: ' + err.message);
+    }
 });
 </script>
 {% endblock %}
