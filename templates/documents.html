@@ -119,14 +119,10 @@ async function loadDocuments() {
             formatBytes(doc.size_bytes) + ' | Uploaded: ' +
             new Date(doc.created_at).toLocaleDateString() + '</small></p>';
 
-        if (doc.summary) {
-            html += '<details><summary>Summary</summary><p>' + escapeHtml(doc.summary) + '</p></details>';
-        }
-
         html += '<div class="task-actions">';
-        html += '<button class="outline download-btn" data-doc-id="' + doc.id + '">Download</button> ';
+        html += '<button class="outline download-btn" data-doc-id="' + doc.id + '" data-doc-name="' + escapeHtml(doc.name) + '">Download</button> ';
         if (doc.summary) {
-            html += '<button class="outline summarize-btn" data-doc-id="' + doc.id + '">View Summary</button> ';
+            html += '<button class="outline summarize-btn" data-doc-id="' + doc.id + '">Show Summary</button> ';
         } else {
             html += '<button class="outline secondary summarize-btn" data-doc-id="' + doc.id + '">Summarize with AI</button> ';
         }
@@ -137,26 +133,53 @@ async function loadDocuments() {
         container.appendChild(article);
     }
 
-    // Bind download buttons
+    // Bind download buttons — force download to system
     container.querySelectorAll('.download-btn').forEach(function(btn) {
         btn.addEventListener('click', async function() {
             const docId = this.dataset.docId;
+            const docName = this.dataset.docName;
+            this.setAttribute('aria-busy', 'true');
             const resp = await apiFetch('/api/documents/' + docId + '/download-url');
+            this.setAttribute('aria-busy', 'false');
             if (resp.ok) {
                 const data = await resp.json();
-                window.open(data.download_url, '_blank');
+                // Force download via hidden link with download attribute
+                const a = document.createElement('a');
+                a.href = data.download_url;
+                a.download = docName || 'download';
+                a.style.display = 'none';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
             } else {
                 showAlert('Failed to get download URL.', 'error');
             }
         });
     });
 
-    // Bind summarize buttons
+    // Bind summarize buttons — toggle if already summarized
     container.querySelectorAll('.summarize-btn').forEach(function(btn) {
         btn.addEventListener('click', async function() {
             const docId = this.dataset.docId;
+            const article = this.closest('article');
+            const existing = article.querySelector('.summary-block');
+
+            // Toggle: if summary is visible, hide it
+            if (existing && existing.style.display !== 'none') {
+                existing.style.display = 'none';
+                this.textContent = 'Show Summary';
+                return;
+            }
+            // Toggle: if summary is hidden, show it
+            if (existing && existing.style.display === 'none') {
+                existing.style.display = 'block';
+                this.textContent = 'Hide Summary';
+                return;
+            }
+
+            // No summary yet — fetch from API
             this.setAttribute('aria-busy', 'true');
-            this.textContent = 'Processing...';
+            this.textContent = 'Summarizing...';
             this.disabled = true;
             const resp = await apiFetch('/api/documents/' + docId + '/summarize', {
                 method: 'POST',
@@ -165,17 +188,12 @@ async function loadDocuments() {
             this.disabled = false;
             if (resp.ok) {
                 const data = await resp.json();
-                // Show summary inline
-                const article = this.closest('article');
-                let details = article.querySelector('details');
-                if (!details) {
-                    details = document.createElement('details');
-                    details.open = true;
-                    article.querySelector('.task-actions').before(details);
-                }
-                details.innerHTML = '<summary>AI Summary</summary><p>' + escapeHtml(data.summary) + '</p>';
-                details.open = true;
-                this.textContent = 'View Summary';
+                const block = document.createElement('div');
+                block.className = 'summary-block';
+                block.style.cssText = 'background: var(--pico-card-background-color); border-left: 3px solid var(--pico-primary); padding: 0.75rem 1rem; margin: 0.5rem 0; border-radius: 4px;';
+                block.innerHTML = '<strong>AI Summary</strong><p>' + escapeHtml(data.summary) + '</p>';
+                article.querySelector('.task-actions').before(block);
+                this.textContent = 'Hide Summary';
                 this.classList.remove('secondary');
             } else {
                 const err = await resp.json();
