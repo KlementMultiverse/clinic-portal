@@ -137,35 +137,35 @@ Will implement temporary password flow with `must_reset_password` middleware enf
 
 ```
 config/
-├── settings.py          # Django settings: DB, middleware, apps, cache, S3, Lambda config
-├── urls.py              # Tenant-specific URL routing (mounts NinjaAPI)
-├── urls_public.py       # Public schema URLs (landing, signup)
-└── wsgi.py
++-- settings.py          # Django settings: DB, middleware, apps, cache, S3, Lambda config
++-- urls.py              # Tenant-specific URL routing (mounts NinjaAPI)
++-- urls_public.py       # Public schema URLs (landing, signup)
++-- wsgi.py
 
 apps/
-├── tenants/             # SHARED — Tenant + Domain models, provisioning
-│   ├── models.py        # Tenant(TenantBase), Domain(DomainMixin)
-│   ├── api.py           # POST /api/tenants/ (signup), GET /api/tenants/ (superadmin)
-│   └── services.py      # provision_tenant() wrapper
-│
-├── users/               # SHARED — Global user model, auth
-│   ├── models.py        # User(UserProfile) with name, role, must_reset_password
-��   ├── api.py           # /api/auth/ (login, register, logout, me), /api/staff/
-│   └── services.py      # Staff invite logic, password generation
-│
-├── workflows/           # TENANT — Business process automation
-│   ├── models.py        # Workflow, Task (state machine), AuditLog
-│   ├── api.py           # /api/workflows/, /api/tasks/
-│   └── services.py      # State machine validation, audit logging
-│
-├── documents/           # TENANT — S3 file management
-│   ���── models.py        # Document (s3_key, summary, FKs)
-│   ├── api.py           # /api/documents/ (upload-url, register, download-url, summarize)
-│   ���── services.py      # S3 presigned URL generation, Lambda invocation
-│
-└── dashboard/           # TENANT — Statistics
-    ├── api.py           # GET /api/dashboard/stats
-    └── templates/       # Dashboard template
++-- tenants/             # SHARED — Tenant + Domain models, provisioning
+|   +-- models.py        # Tenant(TenantBase), Domain(DomainMixin)
+|   +-- api.py           # POST /api/tenants/ (signup), GET /api/tenants/ (superadmin)
+|   +-- services.py      # provision_tenant() wrapper
+|
++-- users/               # SHARED — Global user model, auth
+|   +-- models.py        # User(UserProfile) with name, role, must_reset_password
+|   +-- api.py           # /api/auth/ (login, register, logout, me), /api/staff/
+|   +-- services.py      # Staff invite logic, password generation
+|
++-- workflows/           # TENANT — Business process automation
+|   +-- models.py        # Workflow, Task (state machine), AuditLog
+|   +-- api.py           # /api/workflows/, /api/tasks/
+|   +-- services.py      # State machine validation, audit logging
+|
++-- documents/           # TENANT — S3 file management
+|   +-- models.py        # Document (s3_key, summary, FKs)
+|   +-- api.py           # /api/documents/ (upload-url, register, download-url, summarize)
+|   +-- services.py      # S3 presigned URL generation, Lambda invocation
+|
++-- dashboard/           # TENANT — Statistics
+    +-- api.py           # GET /api/dashboard/stats
+    +-- templates/       # Dashboard template
 ```
 
 ### Data Models
@@ -418,6 +418,6 @@ class Document(Model):
 
 - **Input Validation:** All API inputs validated via Django Ninja Pydantic schemas. Write schemas explicitly list allowed fields — privilege fields (role, is_superuser) excluded. Lambda responses sanitized before storage (strip HTML tags).
 
-- **Password Security:** Staff invited with temporary passwords. `must_reset_password` flag enforced by server-side middleware (not client-side redirect). Temporary passwords should expire after 24 hours.
+- **Password Security:** Staff invited with temporary passwords. `must_reset_password` flag enforced by server-side middleware (not client-side redirect). Note: Temporary password expiry (24-hour window) is deferred to a future sprint — current implementation requires reset on first login but does not enforce a time limit.
 
 - **Security Headers:** `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: same-origin`. CSP configured to restrict script sources.
