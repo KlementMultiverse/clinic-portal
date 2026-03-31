@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+
+{% block title %}Documents - Clinic Portal{% endblock %}
+
+{% block content %}
+<section>
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h1>Documents</h1>
+        <button id="upload-doc-btn">Upload Document</button>
+    </div>
+</section>
+
+<!-- Upload dialog -->
+<dialog id="upload-dialog">
+    <article>
+        <header>
+            <button aria-label="Close" rel="prev" class="close-dialog"></button>
+            <h3>Upload Document</h3>
+        </header>
+        <form id="upload-form">
+            <label for="doc-file">Select File</label>
+            <input type="file" id="doc-file" name="file" required>
+            <button type="submit">Upload</button>
+        </form>
+    </article>
+</dialog>
+
+<!-- Document list -->
+<section id="document-list">
+    <p>Loading documents...</p>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Close dialog buttons
+document.querySelectorAll('.close-dialog').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        this.closest('dialog').close();
+    });
+});
+
+document.getElementById('upload-doc-btn').addEventListener('click', function() {
+    document.getElementById('upload-dialog').showModal();
+});
+
+document.getElementById('upload-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const fileInput = document.getElementById('doc-file');
+    const file = fileInput.files[0];
+    if (!file) return;
+
+    // Step 1: Get presigned upload URL
+    const urlResp = await apiFetch('/api/documents/upload-url', {
+        method: 'POST',
+        body: JSON.stringify({ filename: file.name, content_type: file.type || 'application/octet-stream' }),
+    });
+    if (!urlResp.ok) {
+        const err = await urlResp.json();
+        showAlert(err.message || 'Failed to get upload URL.', 'error');
+        return;
+    }
+    const urlData = await urlResp.json();
+
+    // Step 2: PUT file to S3 presigned URL
+    try {
+        const putResp = await fetch(urlData.upload_url, {
+            method: 'PUT',
+            headers: { 'Content-Type': file.type || 'application/octet-stream' },
+            body: file,
+        });
+        if (!putResp.ok) {
+            showAlert('Failed to upload file to storage.', 'error');
+            return;
+        }
+    } catch (err) {
+        showAlert('Upload failed: ' + err.message, 'error');
+        return;
+    }
+
+    // Step 3: Register document in API
+    const regResp = await apiFetch('/api/documents/', {
+        method: 'POST',
+        body: JSON.stringify({
+            name: file.name,
+            s3_key: urlData.s3_key,
+            content_type: file.type || 'application/octet-stream',
+            size_bytes: file.size,
+        }),
+    });
+    if (regResp.ok) {
+        document.getElementById('upload-dialog').close();
+        fileInput.value = '';
+        showAlert('Document uploaded successfully.', 'success');
+        loadDocuments();
+    } else {
+        const err = await regResp.json();
+        showAlert(err.message || 'Failed to register document.', 'error');
+    }
+});
+
+async function loadDocuments() {
+    const resp = await apiFetch('/api/documents/');
+    const container = document.getElementById('document-list');
+    if (!resp.ok) {
+        container.innerHTML = '<p>Failed to load documents.</p>';
+        return;
+    }
+    const docs = await resp.json();
+    if (docs.length === 0) {
+        container.innerHTML = '<p>No documents yet.</p>';
+        return;
+    }
+    container.innerHTML = '';
+    for (const doc of docs) {
+        const article = document.createElement('article');
+        let html = '<header><strong>' + escapeHtml(doc.name) + '</strong></header>';
+        html += '<p><small>' + escapeHtml(doc.content_type) + ' | ' +
+            formatBytes(doc.size_bytes) + ' | Uploaded: ' +
+            new Date(doc.created_at).toLocaleDateString() + '</small></p>';
+
+        if (doc.summary) {
+            html += '<details><summary>Summary</summary><p>' + escapeHtml(doc.summary) + '</p></details>';
+        }
+
+        html += '<div class="task-actions">';
+        html += '<button class="outline download-btn" data-doc-id="' + doc.id + '">Download</button> ';
+        html += '<button class="outline secondary summarize-btn" data-doc-id="' + doc.id + '">Summarize</button>';
+        html += '</div>';
+
+        article.innerHTML = html;
+        container.appendChild(article);
+    }
+
+    // Bind download buttons
+    container.querySelectorAll('.download-btn').forEach(function(btn) {
+        btn.addEventListener('click', async function() {
+            const docId = this.dataset.docId;
+            const resp = await apiFetch('/api/documents/' + docId + '/download-url');
+            if (resp.ok) {
+                const data = await resp.json();
+                window.open(data.download_url, '_blank');
+            } else {
+                showAlert('Failed to get download URL.', 'error');
+            }
+        });
+    });
+
+    // Bind summarize buttons
+    container.querySelectorAll('.summarize-btn').forEach(function(btn) {
+        btn.addEventListener('click', async function() {
+            const docId = this.dataset.docId;
+            this.setAttribute('aria-busy', 'true');
+            this.disabled = true;
+            const resp = await apiFetch('/api/documents/' + docId + '/summarize', {
+                method: 'POST',
+            });
+            this.setAttribute('aria-busy', 'false');
+            this.disabled = false;
+            if (resp.ok) {
+                showAlert('Document summarized.', 'success');
+                loadDocuments();
+            } else {
+                const err = await resp.json();
+                showAlert(err.message || 'Summarization failed.', 'error');
+            }
+        });
+    });
+}
+
+function formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+loadDocuments();
+</script>
+{% endblock %}

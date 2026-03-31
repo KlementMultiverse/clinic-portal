@@ -328,3 +328,8 @@ api.add_router("/tasks/", task_router, tags=["tasks"])
 from apps.documents.api import document_router  # noqa: E402
 
 api.add_router("/documents/", document_router, tags=["documents"])
+
+# Import and mount dashboard router (Phase 6)
+from apps.dashboard.api import dashboard_router  # noqa: E402
+
+api.add_router("/dashboard/", dashboard_router, tags=["dashboard"])

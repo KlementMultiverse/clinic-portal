@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+
+{% block title %}Staff - Clinic Portal{% endblock %}
+
+{% block content %}
+<section>
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h1>Staff Management</h1>
+        <button id="invite-staff-btn">Invite Staff</button>
+    </div>
+</section>
+
+<!-- Invite dialog -->
+<dialog id="invite-dialog">
+    <article>
+        <header>
+            <button aria-label="Close" rel="prev" class="close-dialog"></button>
+            <h3>Invite Staff Member</h3>
+        </header>
+        <form id="invite-form">
+            <label for="invite-email">Email</label>
+            <input type="email" id="invite-email" name="email" required>
+            <label for="invite-name">Name</label>
+            <input type="text" id="invite-name" name="name" required>
+            <button type="submit">Invite</button>
+        </form>
+    </article>
+</dialog>
+
+<!-- Staff list -->
+<section id="staff-list">
+    <p>Loading staff...</p>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Close dialog buttons
+document.querySelectorAll('.close-dialog').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        this.closest('dialog').close();
+    });
+});
+
+document.getElementById('invite-staff-btn').addEventListener('click', function() {
+    document.getElementById('invite-dialog').showModal();
+});
+
+document.getElementById('invite-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const email = document.getElementById('invite-email').value;
+    const name = document.getElementById('invite-name').value;
+    const resp = await apiFetch('/api/staff/invite', {
+        method: 'POST',
+        body: JSON.stringify({ email: email, name: name }),
+    });
+    if (resp.ok) {
+        document.getElementById('invite-dialog').close();
+        document.getElementById('invite-email').value = '';
+        document.getElementById('invite-name').value = '';
+        showAlert('Staff member invited.', 'success');
+        loadStaff();
+    } else {
+        const err = await resp.json();
+        showAlert(err.message || 'Invitation failed.', 'error');
+    }
+});
+
+async function loadStaff() {
+    const resp = await apiFetch('/api/staff/');
+    const container = document.getElementById('staff-list');
+    if (!resp.ok) {
+        container.innerHTML = '<p>Failed to load staff. You may need admin access.</p>';
+        return;
+    }
+    const staffList = await resp.json();
+    if (staffList.length === 0) {
+        container.innerHTML = '<p>No staff members yet.</p>';
+        return;
+    }
+
+    let html = '<table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Actions</th></tr></thead><tbody>';
+    for (const member of staffList) {
+        html += '<tr>';
+        html += '<td>' + escapeHtml(member.name || '--') + '</td>';
+        html += '<td>' + escapeHtml(member.email) + '</td>';
+        html += '<td><span class="badge badge-' + member.role + '">' + member.role + '</span></td>';
+        html += '<td><button class="outline secondary remove-btn" data-user-id="' +
+            member.id + '">Remove</button></td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    container.innerHTML = html;
+
+    // Bind remove buttons
+    container.querySelectorAll('.remove-btn').forEach(function(btn) {
+        btn.addEventListener('click', async function() {
+            if (!confirm('Remove this staff member from the clinic?')) return;
+            const userId = this.dataset.userId;
+            const resp = await apiFetch('/api/staff/' + userId, {
+                method: 'DELETE',
+            });
+            if (resp.ok) {
+                showAlert('Staff member removed.', 'success');
+                loadStaff();
+            } else {
+                const err = await resp.json();
+                showAlert(err.message || 'Removal failed.', 'error');
+            }
+        });
+    });
+}
+
+loadStaff();
+</script>
+{% endblock %}

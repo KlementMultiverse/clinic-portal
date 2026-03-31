@@ -1,0 +1,58 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <title>{% block title %}Clinic Portal{% endblock %}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <link rel="stylesheet" href="{% static 'styles.css' %}">
+</head>
+<body>
+    <nav class="container-fluid">
+        <ul>
+            <li>
+                <strong>
+                    {% if request.tenant and request.tenant.schema_name != "public" %}
+                        {{ request.tenant.name }}
+                    {% else %}
+                        Clinic Portal
+                    {% endif %}
+                </strong>
+            </li>
+        </ul>
+        <ul>
+            {% if user.is_authenticated %}
+                <li><a href="{% url 'dashboard' %}">Dashboard</a></li>
+                <li><a href="{% url 'workflows' %}">Workflows</a></li>
+                <li><a href="{% url 'documents' %}">Documents</a></li>
+                {% if user.role == "admin" %}
+                    <li><a href="{% url 'staff' %}">Staff</a></li>
+                {% endif %}
+                <li>
+                    <button class="outline secondary" id="logout-btn" type="button">
+                        Logout
+                    </button>
+                </li>
+            {% else %}
+                <li><a href="{% url 'login' %}">Login</a></li>
+                <li><a href="{% url 'register' %}">Register</a></li>
+            {% endif %}
+        </ul>
+    </nav>
+
+    <main class="container">
+        <div id="alert-container"></div>
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="container">
+        <hr>
+        <p><small>Clinic Portal</small></p>
+    </footer>
+
+    <script src="{% static 'app.js' %}"></script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

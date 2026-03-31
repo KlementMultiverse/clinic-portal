@@ -125,3 +125,6 @@ X_FRAME_OPTIONS = "DENY"
 
 # Tenant Users settings
 TENANT_USERS_DOMAIN = os.environ.get("TENANT_USERS_DOMAIN", "localhost")
+
+# Login URL for @login_required decorator redirect
+LOGIN_URL = "/login/"

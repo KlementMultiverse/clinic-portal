@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+
+{% block title %}Clinic Portal - Create Your Workspace{% endblock %}
+
+{% block content %}
+<section>
+    <hgroup>
+        <h1>Create your clinic workspace</h1>
+        <p>Multi-tenant SaaS management portal for medical clinics</p>
+    </hgroup>
+</section>
+
+<section>
+    <div class="grid">
+        <div>
+            <article>
+                <header>
+                    <h3>Sign Up</h3>
+                </header>
+                <form id="signup-form">
+                    <label for="clinic-name">Clinic Name</label>
+                    <input type="text" id="clinic-name" name="clinic_name" placeholder="My Clinic" required>
+
+                    <label for="subdomain">Subdomain</label>
+                    <input type="text" id="subdomain" name="subdomain" placeholder="myclinic" required>
+                    <small>Your workspace will be at <strong><span id="subdomain-preview">myclinic</span>.localhost</strong></small>
+
+                    <label for="signup-email">Email</label>
+                    <input type="email" id="signup-email" name="email" placeholder="admin@example.com" required>
+
+                    <label for="signup-password">Password</label>
+                    <input type="password" id="signup-password" name="password" minlength="8" required>
+
+                    <button type="submit">Create Workspace</button>
+                </form>
+                <footer>
+                    <p>Already have an account? <a href="/login/">Login</a></p>
+                </footer>
+            </article>
+        </div>
+
+        <div>
+            <article>
+                <header>
+                    <h3>Features</h3>
+                </header>
+                <ul>
+                    <li>Isolated workspace per clinic</li>
+                    <li>Workflow and task management</li>
+                    <li>Document storage with AI summarization</li>
+                    <li>Staff management and role-based access</li>
+                </ul>
+            </article>
+        </div>
+    </div>
+</section>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.getElementById('subdomain').addEventListener('input', function() {
+    document.getElementById('subdomain-preview').textContent = this.value || 'myclinic';
+});
+
+document.getElementById('signup-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const email = document.getElementById('signup-email').value;
+    const password = document.getElementById('signup-password').value;
+    const clinicName = document.getElementById('clinic-name').value;
+    const subdomain = document.getElementById('subdomain').value;
+
+    // Step 1: Register user
+    let resp = await apiFetch('/api/auth/register', {
+        method: 'POST',
+        body: JSON.stringify({ email: email, password: password, name: clinicName }),
+    });
+    if (!resp.ok) {
+        const err = await resp.json();
+        showAlert(err.message || 'Registration failed.', 'error');
+        return;
+    }
+
+    // Step 2: Login
+    resp = await apiFetch('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ email: email, password: password }),
+    });
+    if (!resp.ok) {
+        const err = await resp.json();
+        showAlert(err.message || 'Login failed.', 'error');
+        return;
+    }
+
+    // Step 3: Create tenant
+    resp = await apiFetch('/api/tenants/', {
+        method: 'POST',
+        body: JSON.stringify({ name: clinicName, subdomain: subdomain }),
+    });
+    if (!resp.ok) {
+        const err = await resp.json();
+        showAlert(err.message || 'Workspace creation failed.', 'error');
+        return;
+    }
+
+    showAlert('Workspace created! Redirecting...', 'success');
+    setTimeout(function() {
+        window.location.href = '//' + subdomain + '.' + window.location.hostname + '/';
+    }, 1500);
+});
+</script>
+{% endblock %}

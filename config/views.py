@@ -1,0 +1,41 @@
+from django.contrib.auth.decorators import login_required
+from django.shortcuts import render
+
+
+def landing(request):
+    """Public landing page at portal.localhost."""
+    return render(request, "landing.html")
+
+
+def login_view(request):
+    """Login page."""
+    return render(request, "login.html")
+
+
+def register_view(request):
+    """Registration page."""
+    return render(request, "register.html")
+
+
+@login_required
+def dashboard(request):
+    """Dashboard page (auth required)."""
+    return render(request, "dashboard.html")
+
+
+@login_required
+def workflows(request):
+    """Workflows page (auth required)."""
+    return render(request, "workflows.html")
+
+
+@login_required
+def documents(request):
+    """Documents page (auth required)."""
+    return render(request, "documents.html")
+
+
+@login_required
+def staff(request):
+    """Staff management page (auth required, admin only enforced in template)."""
+    return render(request, "staff.html")
