@@ -19,6 +19,8 @@ RUN uv sync --frozen --no-dev
 
 COPY . .
 
+RUN chmod +x railway_start.sh
+
 EXPOSE 8000
 
-CMD ["uv", "run", "python", "manage.py", "runserver", "0.0.0.0:8000"]
+CMD ["./railway_start.sh"]
