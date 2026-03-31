@@ -126,10 +126,11 @@ async function loadDocuments() {
         html += '<div class="task-actions">';
         html += '<button class="outline download-btn" data-doc-id="' + doc.id + '">Download</button> ';
         if (doc.summary) {
-            html += '<button class="outline summarize-btn" data-doc-id="' + doc.id + '">View Summary</button>';
+            html += '<button class="outline summarize-btn" data-doc-id="' + doc.id + '">View Summary</button> ';
         } else {
-            html += '<button class="outline secondary summarize-btn" data-doc-id="' + doc.id + '">Summarize with AI</button>';
+            html += '<button class="outline secondary summarize-btn" data-doc-id="' + doc.id + '">Summarize with AI</button> ';
         }
+        html += '<button class="outline contrast delete-doc-btn" data-doc-id="' + doc.id + '" data-doc-name="' + escapeHtml(doc.name) + '">Delete</button>';
         html += '</div>';
 
         article.innerHTML = html;
@@ -180,6 +181,29 @@ async function loadDocuments() {
                 const err = await resp.json();
                 showAlert(err.message || 'Summarization failed.', 'error');
                 this.textContent = 'Summarize with AI';
+            }
+        });
+    });
+
+    // Bind delete buttons
+    container.querySelectorAll('.delete-doc-btn').forEach(function(btn) {
+        btn.addEventListener('click', async function() {
+            const docId = this.dataset.docId;
+            const docName = this.dataset.docName;
+            if (!confirm('Delete "' + docName + '"? This removes the file from S3 and cannot be undone.')) return;
+            this.setAttribute('aria-busy', 'true');
+            this.disabled = true;
+            const resp = await apiFetch('/api/documents/' + docId, {
+                method: 'DELETE',
+            });
+            if (resp.ok) {
+                showAlert('Document deleted.', 'success');
+                loadDocuments();
+            } else {
+                const err = await resp.json();
+                showAlert(err.message || 'Delete failed.', 'error');
+                this.setAttribute('aria-busy', 'false');
+                this.disabled = false;
             }
         });
     });
