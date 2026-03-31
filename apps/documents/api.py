@@ -22,6 +22,53 @@ from apps.workflows.models import AuditLog
 
 logger = logging.getLogger(__name__)
 
+
+def _read_document_text(document):
+    """Read document content from S3 for summarization.
+
+    Downloads the file from S3 and extracts text.
+    For PDFs/docs, returns the raw bytes decoded as text.
+    Falls back to metadata-only description if download fails.
+    """
+    try:
+        from apps.documents.services import get_s3_client
+
+        s3 = get_s3_client()
+        from django.conf import settings
+
+        resp = s3.get_object(
+            Bucket=settings.AWS_STORAGE_BUCKET_NAME,
+            Key=document.s3_key,
+        )
+        raw = resp["Body"].read()
+        # Try to extract text based on content type
+        if document.content_type == "text/plain":
+            return raw.decode("utf-8", errors="replace")[:10000]
+        # For PDFs — try to decode readable text portions
+        try:
+            text = raw.decode("utf-8", errors="replace")
+            # Filter to printable characters
+            clean = "".join(c for c in text if c.isprintable() or c in "\n\r\t")
+            if len(clean.strip()) > 50:
+                return f"Document: {document.name}\n" f"Content:\n{clean[:10000]}"
+        except Exception:
+            pass
+        # Fallback — describe the document
+        return (
+            f"Document: {document.name}\n"
+            f"Type: {document.content_type}\n"
+            f"Size: {document.size_bytes} bytes\n"
+            f"(Binary file — summarize based on filename and type)"
+        )
+    except Exception as exc:
+        logger.warning("Could not read document from S3: %s", exc)
+        return (
+            f"Document: {document.name}\n"
+            f"Type: {document.content_type}\n"
+            f"Size: {document.size_bytes} bytes"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Schemas -- Per CLAUDE.md Rule #1, using Django Ninja Schema (Pydantic)
 # ---------------------------------------------------------------------------
@@ -264,9 +311,11 @@ def summarize_document(request: HttpRequest, document_id: int):
 
     logger.info("Document summarize: id=%d", document_id)
     try:
+        # Fetch document content from S3 for summarization
+        doc_text = _read_document_text(document)
         user_context = get_user_context(request.user)
         summary = invoke_summarize_lambda(
-            f"Document: {document.name}, Type: {document.content_type}",
+            doc_text,
             user_context=user_context,
         )
     except Exception as e:
