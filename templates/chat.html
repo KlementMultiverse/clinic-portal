@@ -168,7 +168,12 @@ async function loadThreads() {
             var active = t.id === currentThreadId ? 'background:var(--pico-primary-focus);' : '';
             html += '<div onclick="loadThread(' + t.id + ')" style="cursor:pointer; padding:.4rem; margin:.2rem 0; border-radius:6px; ' + active + '">';
             html += '<small><strong>' + escapeHtml(t.title.substring(0, 35)) + '</strong></small><br>';
-            html += '<small style="color:var(--pico-muted-color);">' + t.message_count + ' msgs</small>';
+            var d = new Date(t.updated_at);
+            var now = new Date();
+            var timeStr = (d.toDateString() === now.toDateString())
+                ? d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit', hour12:true})
+                : (d.getMonth()+1) + '/' + d.getDate();
+            html += '<small style="color:var(--pico-muted-color);">' + t.message_count + ' msgs &middot; ' + timeStr + '</small>';
             html += '</div>';
         }
         list.innerHTML = html;

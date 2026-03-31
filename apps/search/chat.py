@@ -193,23 +193,32 @@ def chat(user, message, thread_id=None):
     history = _format_history(thread)
     user_name = user.name or user.email.split("@")[0]
 
-    # Get user's last 5 searches from SearchHistory for context
+    # Get user's last 3 searches with actual data for context
     from apps.search.models import SearchHistory
 
     recent_searches = SearchHistory.objects.filter(user=user).order_by("-created_at")[
-        :5
+        :3
     ]
     search_context = ""
     if recent_searches:
-        search_context = "\nUSER'S RECENT SEARCHES (from Search tab):\n"
+        search_context = (
+            "\nUSER'S PREVIOUS SEARCHES (reference only — "
+            "mention ONLY if the user asks about past searches):\n"
+        )
         for s in recent_searches:
-            search_context += (
-                f'- "{s.query}" → {len(s.trials_data)} trials, '
-                f"{len(s.papers_data)} papers"
-            )
+            search_context += f'\nSearch: "{s.query}"\n'
             if s.summary:
-                search_context += f" | Summary: {s.summary[:100]}..."
-            search_context += "\n"
+                search_context += f"Summary: {s.summary[:150]}\n"
+            for t in (s.trials_data or [])[:3]:
+                search_context += (
+                    f"  [{t.get('nct_id', '')}] "
+                    f"{t.get('title', '')[:60]} "
+                    f"({t.get('status', '')})\n"
+                )
+            for p in (s.papers_data or [])[:3]:
+                search_context += (
+                    f"  [PMID:{p.get('pmid', '')}] " f"{p.get('title', '')[:60]}\n"
+                )
 
     system_text = (
         f"You are a clinical research assistant helping {user_name}. "
