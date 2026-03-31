@@ -14,8 +14,10 @@ from apps.documents.services import (
     delete_s3_object,
     generate_download_url,
     generate_upload_url,
+    get_user_context,
     invoke_summarize_lambda,
 )
+from apps.users.services import track_action
 from apps.workflows.models import AuditLog
 
 logger = logging.getLogger(__name__)
@@ -197,6 +199,7 @@ def create_document(request: HttpRequest, data: DocumentIn):
     )
 
     cache.delete("dashboard:stats")
+    track_action(request, "uploaded", "document", document.name, document.id)
     return 201, document
 
 
@@ -258,8 +261,10 @@ def summarize_document(request: HttpRequest, document_id: int):
 
     logger.info("Document summarize: id=%d", document_id)
     try:
+        user_context = get_user_context(request.user)
         summary = invoke_summarize_lambda(
-            f"Document: {document.name}, Type: {document.content_type}"
+            f"Document: {document.name}, Type: {document.content_type}",
+            user_context=user_context,
         )
     except Exception as e:
         logger.error("Document operation failed: %s", str(e), exc_info=True)
@@ -279,6 +284,7 @@ def summarize_document(request: HttpRequest, document_id: int):
         performed_by=request.user,
     )
 
+    track_action(request, "summarized", "document", document.name, document.id)
     return 200, {"id": document.id, "summary": summary}
 
 
@@ -326,4 +332,5 @@ def delete_document(request: HttpRequest, document_id: int):
     cache.delete(f"s3:download:{doc_id}")
     cache.delete(f"llm:summary:{doc_id}")
     cache.delete("dashboard:stats")
+    track_action(request, "deleted", "document", doc_name, doc_id)
     return 200, {"message": "Document deleted."}

@@ -11,6 +11,7 @@ from ninja.security import django_auth
 
 from apps.tenants.models import Tenant
 from apps.users.models import User
+from apps.users.services import track_action
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +154,7 @@ def logout_view(request: HttpRequest):
     - 401 Unauthorized: not authenticated
     """
     logger.info("Logout: email=%s", request.user.email)
+    request.session.pop("recent_actions", None)
     logout(request)
     return 200, {"message": "Logged out successfully."}
 
@@ -274,6 +276,7 @@ def invite_staff(request: HttpRequest, data: StaffInviteIn):
         return 409, {"message": "User is already a member of this tenant."}
 
     logger.info("Staff invited: email=%s to tenant=%s", data.email, tenant.name)
+    track_action(request, "invited", "staff", data.email)
     return 200, {
         "id": user.id,
         "email": user.email,
@@ -315,6 +318,7 @@ def remove_staff(request: HttpRequest, user_id: int):
         return 404, {"message": "User is not a member of this tenant."}
 
     logger.info("Staff removed: user_id=%d from tenant=%s", user_id, tenant.name)
+    track_action(request, "removed", "staff", str(user_id))
     return 200, {"message": "User removed from tenant."}
 
 

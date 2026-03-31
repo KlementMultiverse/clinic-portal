@@ -18,6 +18,21 @@ BEDROCK_MODEL = os.environ.get(
 )
 
 
+def get_user_context(user):
+    """Get last 3 AuditLog entries for context injection into LLM prompts."""
+    from apps.workflows.models import AuditLog
+
+    recent = AuditLog.objects.filter(performed_by=user).order_by("-timestamp")[:3]
+    if not recent:
+        return ""
+    context_lines = []
+    for entry in recent:
+        context_lines.append(
+            f"- {entry.action} on {entry.entity_type} (ID: {entry.entity_id})"
+        )
+    return "User's recent activity (for context):\n" + "\n".join(context_lines) + "\n\n"
+
+
 def get_s3_client():
     """Create S3 client. Per CLAUDE.md Rule #9: credentials from os.environ."""
     return boto3.client(
@@ -131,7 +146,7 @@ def delete_s3_object(s3_key):
 # ---------------------------------------------------------------------------
 # Bedrock direct call (used when LAMBDA_SUMMARIZE_ARN is not set)
 # ---------------------------------------------------------------------------
-def _invoke_llm(messages, max_tokens=500):
+def _invoke_llm(messages, max_tokens=500, temperature=0.2):
     """Call Claude API directly (Haiku — cheapest model)."""
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
@@ -142,6 +157,7 @@ def _invoke_llm(messages, max_tokens=500):
     payload = {
         "model": model,
         "max_tokens": max_tokens,
+        "temperature": temperature,
         "messages": messages,
     }
 
@@ -166,54 +182,195 @@ def _invoke_llm(messages, max_tokens=500):
         raise RuntimeError(f"Claude API error ({e.code}): {error_body}") from e
 
 
-def _summarize_via_llm(text):
-    """Summarize text directly via Bedrock (no Lambda)."""
+def _validate_summary(raw_output):
+    """Validate and clean LLM summary output.
+
+    Per CLAUDE.md Rule #18: LLM output sanitized with strip_tags().
+    """
+    import re
+
+    from django.utils.html import strip_tags
+
+    # Strip reasoning block
+    text = re.sub(
+        r"<reasoning>.*?</reasoning>", "", raw_output, flags=re.DOTALL
+    ).strip()
+
+    # Extract after "Summary:" if present
+    if "Summary:" in text:
+        text = text.split("Summary:", 1)[1].strip()
+
+    # Strip HTML tags
+    text = strip_tags(text)
+
+    # Empty check
+    if not text or not text.strip():
+        return "Summary unavailable"
+
+    # Length check (500 words max)
+    words = text.split()
+    if len(words) > 500:
+        text = " ".join(words[:500]) + "... [summary truncated]"
+
+    return text
+
+
+def _summarize_via_llm(text, user_context=""):
+    """Summarize text directly via Claude API (no Lambda).
+
+    Uses system-reminder + Chain-of-Thought prompting with output validation.
+    """
     logger.info("LLM invoke: task_type=%s", "summarize_document")
     messages = [
         {
             "role": "user",
             "content": (
-                "You are a helpful assistant that summarizes documents for "
-                "medical clinic staff. Provide a clear, concise summary.\n\n"
-                f"Document:\n{text[:10000]}"
+                "<system-reminder>\n"
+                "You are summarizing a document for a medical clinic staff member.\n"
+                "- Summarize ONLY what is in the document — do NOT add information"
+                " from your training data\n"
+                "- Keep the summary under 200 words\n"
+                "- Use plain language — avoid medical jargon unless it's in the"
+                " document\n"
+                "- Structure: 1-2 sentence overview, then key points as bullets\n"
+                "- If the document is too short to summarize meaningfully, say so\n"
+                "</system-reminder>\n\n"
+                f"{user_context}"
+                "Follow these steps:\n"
+                "Step 1: Identify the document type (report, form, notes, letter)\n"
+                "Step 2: Extract the 3-5 most important facts\n"
+                "Step 3: Write a concise summary based on those facts\n\n"
+                "<reasoning>\n"
+                "[Your analysis here — this will be stripped before storing]\n"
+                "</reasoning>\n\n"
+                "Summary: [Your final summary here — this is what gets stored]\n\n"
+                f"Document to summarize:\n{text[:10000]}"
             ),
         },
     ]
-    result = _invoke_llm(messages, max_tokens=500)
+    raw = _invoke_llm(messages, max_tokens=500, temperature=0.2)
+    result = _validate_summary(raw)
     logger.info("LLM result: %d chars", len(result))
     return result
 
 
-def _generate_tasks_via_llm(workflow_description):
-    """Generate tasks directly via Bedrock (no Lambda)."""
+def _validate_tasks_json(raw_output):
+    """Validate and parse LLM task generation JSON output. Returns list or None.
+
+    Per CLAUDE.md Rule #18: LLM output sanitized with strip_tags().
+    """
+    from django.utils.html import strip_tags
+
+    text = raw_output.strip()
+
+    # Extract JSON from markdown fences if present
+    if "```" in text:
+        parts = text.split("```")
+        for part in parts:
+            part = part.strip()
+            if part.startswith("json"):
+                part = part[4:].strip()
+            if part.startswith("{"):
+                text = part
+                break
+
+    try:
+        result = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        logger.warning("LLM returned invalid JSON: %s", text[:200])
+        return None
+
+    tasks = result.get("tasks", [])
+    if not isinstance(tasks, list) or len(tasks) == 0:
+        logger.warning("LLM returned empty or invalid tasks array")
+        return None
+
+    # Sanitize each task
+    cleaned = []
+    for t in tasks:
+        title = strip_tags(str(t.get("title", ""))).strip()
+        desc = strip_tags(str(t.get("description", ""))).strip()
+        if title and len(title) <= 100:
+            cleaned.append({"title": title, "description": desc})
+
+    return cleaned if cleaned else None
+
+
+def _generate_tasks_via_llm(workflow_description, user_context=""):
+    """Generate tasks directly via Claude API (no Lambda).
+
+    Uses system-reminder + k-shot examples + validation + reflexion retry.
+    """
     logger.info("LLM invoke: task_type=%s", "generate_tasks")
-    messages = [
-        {
-            "role": "user",
-            "content": (
-                "Generate a task checklist for the following medical clinic "
-                'workflow. Return ONLY a JSON object with a "tasks" key '
-                "containing an array of tasks, each with "
-                '"title" and "description" fields.\n\n'
-                f"Workflow:\n{workflow_description[:5000]}\n\n"
-                'Return JSON: {{"tasks": [{{"title": "...", "description": "..."}}]}}'
-            ),
-        },
-    ]
-    content = _invoke_llm(messages, max_tokens=1000)
-    # Extract JSON from response (may have markdown fences)
-    if "```" in content:
-        content = content.split("```")[1]
-        if content.startswith("json"):
-            content = content[4:]
-    result = json.loads(content.strip())
-    return result.get("tasks", [])
+    prompt = (
+        "<system-reminder>\n"
+        "You are generating a task checklist for a clinic workflow.\n"
+        "- Generate 3-8 tasks (not more, not fewer)\n"
+        "- Each task must be a concrete, actionable step (not vague like"
+        " 'do the thing')\n"
+        "- Tasks should be in logical order (dependencies first)\n"
+        "- Each task needs a title (under 100 chars) and a description"
+        " (1-2 sentences)\n"
+        '- Output ONLY valid JSON: {"tasks": [{"title": "...",'
+        ' "description": "..."}, ...]}\n'
+        "- Do NOT include tasks outside the workflow's scope\n"
+        "</system-reminder>\n\n"
+        "Example 1:\n"
+        'Input: "Patient check-in process at front desk"\n'
+        'Output: {"tasks": [{"title": "Greet patient and verify appointment", '
+        '"description": "Confirm patient name, appointment time, and'
+        ' provider."}, '
+        '{"title": "Collect insurance card and ID", '
+        '"description": "Scan or copy insurance card and photo ID for'
+        ' records."}]}\n\n'
+        "Example 2:\n"
+        'Input: "Lab result review workflow"\n'
+        'Output: {"tasks": [{"title": "Retrieve lab results from portal", '
+        '"description": "Log into lab portal and download latest results'
+        ' for the patient."}, '
+        '{"title": "Flag abnormal values", '
+        '"description": "Highlight any out-of-range results for provider'
+        ' review."}]}\n\n'
+        f"{user_context}"
+        f'Now generate tasks for this workflow:\n"{workflow_description[:5000]}"\n\n'
+        "Return ONLY valid JSON."
+    )
+    messages = [{"role": "user", "content": prompt}]
+
+    raw = _invoke_llm(messages, max_tokens=1000, temperature=0.5)
+    tasks = _validate_tasks_json(raw)
+
+    if tasks is None:
+        # Reflexion: retry once with error context
+        logger.warning("LLM task generation failed validation, retrying with reflexion")
+        retry_messages = [
+            {"role": "user", "content": prompt},
+            {"role": "assistant", "content": raw},
+            {
+                "role": "user",
+                "content": (
+                    "Your previous response was invalid because it was not valid"
+                    " JSON or did not contain a 'tasks' array. Please try again."
+                    ' Return ONLY a valid JSON object: {"tasks": [{"title": "...",'
+                    ' "description": "..."}]}'
+                ),
+            },
+        ]
+        raw2 = _invoke_llm(retry_messages, max_tokens=1000, temperature=0.5)
+        tasks = _validate_tasks_json(raw2)
+        if tasks is None:
+            raise RuntimeError(
+                "AI could not generate tasks — try rephrasing the workflow"
+                " description"
+            )
+
+    return tasks
 
 
 # ---------------------------------------------------------------------------
 # Public API: tries Lambda first, falls back to direct Bedrock
 # ---------------------------------------------------------------------------
-def invoke_summarize_lambda(text):
+def invoke_summarize_lambda(text, user_context=None):
     """Invoke summarization — via Lambda if configured, else direct Bedrock.
 
     Per CLAUDE.md Rule #8: LLM calls via Lambda when deployed.
@@ -222,7 +379,11 @@ def invoke_summarize_lambda(text):
     lambda_arn = settings.LAMBDA_SUMMARIZE_ARN
     if not lambda_arn:
         logger.info("LAMBDA_SUMMARIZE_ARN not set — calling Bedrock directly")
-        return _summarize_via_llm(text)
+        return _summarize_via_llm(text, user_context=user_context or "")
+
+    payload_data = {"text": text, "task_type": "summarize_document"}
+    if user_context:
+        payload_data["user_context"] = user_context
 
     try:
         lambda_client = boto3.client(
@@ -234,7 +395,7 @@ def invoke_summarize_lambda(text):
         response = lambda_client.invoke(
             FunctionName=lambda_arn,
             InvocationType="RequestResponse",
-            Payload=json.dumps({"text": text, "task_type": "summarize_document"}),
+            Payload=json.dumps(payload_data),
         )
     except botocore.exceptions.ClientError as exc:
         logger.error("Lambda ClientError during summarize: %s", exc)
@@ -260,7 +421,7 @@ def invoke_summarize_lambda(text):
     return result.get("summary", "")
 
 
-def invoke_generate_tasks_lambda(workflow_description):
+def invoke_generate_tasks_lambda(workflow_description, user_context=None):
     """Invoke task generation — via Lambda if configured, else direct Bedrock.
 
     Per CLAUDE.md Rule #8: LLM calls via Lambda when deployed.
@@ -269,7 +430,13 @@ def invoke_generate_tasks_lambda(workflow_description):
     lambda_arn = settings.LAMBDA_SUMMARIZE_ARN
     if not lambda_arn:
         logger.info("LAMBDA_SUMMARIZE_ARN not set — calling Bedrock directly")
-        return _generate_tasks_via_llm(workflow_description)
+        return _generate_tasks_via_llm(
+            workflow_description, user_context=user_context or ""
+        )
+
+    payload_data = {"text": workflow_description, "task_type": "generate_tasks"}
+    if user_context:
+        payload_data["user_context"] = user_context
 
     try:
         lambda_client = boto3.client(
@@ -281,9 +448,7 @@ def invoke_generate_tasks_lambda(workflow_description):
         response = lambda_client.invoke(
             FunctionName=lambda_arn,
             InvocationType="RequestResponse",
-            Payload=json.dumps(
-                {"text": workflow_description, "task_type": "generate_tasks"}
-            ),
+            Payload=json.dumps(payload_data),
         )
     except botocore.exceptions.ClientError as exc:
         logger.error("Lambda ClientError during generate_tasks: %s", exc)

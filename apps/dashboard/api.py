@@ -22,6 +22,7 @@ class DashboardStatsOut(Schema):
     total_documents: int
     total_staff: int
     tasks_by_status: dict  # {"created": 1, "assigned": 2, ...}
+    recent_actions: list = []
 
 
 class MessageOut(Schema):
@@ -62,11 +63,14 @@ def get_stats(request: HttpRequest):
     )
     tasks_by_status = {item["status"]: item["count"] for item in status_counts}
 
+    recent_actions = request.session.get("recent_actions", [])
+
     result = {
         "total_workflows": total_workflows,
         "total_documents": total_documents,
         "total_staff": total_staff,
         "tasks_by_status": tasks_by_status,
+        "recent_actions": recent_actions,
     }
     cache.set("dashboard:stats", result, 60)
     return 200, result

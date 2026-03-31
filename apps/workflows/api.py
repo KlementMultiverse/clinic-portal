@@ -9,8 +9,9 @@ from ninja import Router, Schema
 from ninja.errors import HttpError
 from ninja.security import django_auth
 
-from apps.documents.services import invoke_generate_tasks_lambda
+from apps.documents.services import get_user_context, invoke_generate_tasks_lambda
 from apps.users.models import User
+from apps.users.services import track_action
 from apps.workflows.models import AuditLog, Task, Workflow
 
 logger = logging.getLogger(__name__)
@@ -151,6 +152,7 @@ def create_workflow(request: HttpRequest, data: WorkflowIn):
     )
     cache.delete("workflows:list")
     cache.delete("dashboard:stats")
+    track_action(request, "created", "workflow", workflow.name, workflow.id)
     return 201, workflow
 
 
@@ -206,6 +208,7 @@ def update_workflow(request: HttpRequest, workflow_id: int, data: WorkflowIn):
     )
     cache.delete("workflows:list")
     cache.delete("dashboard:stats")
+    track_action(request, "updated", "workflow", workflow.name, workflow.id)
     return 200, workflow
 
 
@@ -226,6 +229,7 @@ def delete_workflow(request: HttpRequest, workflow_id: int):
     except Workflow.DoesNotExist:
         return 404, {"message": "Workflow not found."}
     workflow_id_val = workflow.id
+    workflow_name = workflow.name
     workflow.delete()
     AuditLog.objects.create(
         entity_type="workflow",
@@ -235,6 +239,7 @@ def delete_workflow(request: HttpRequest, workflow_id: int):
     )
     cache.delete("workflows:list")
     cache.delete("dashboard:stats")
+    track_action(request, "deleted", "workflow", workflow_name, workflow_id_val)
     return 200, {"message": "Workflow deleted."}
 
 
@@ -269,8 +274,10 @@ def generate_tasks(request: HttpRequest, workflow_id: int):
         generated = cached
     else:
         try:
+            user_context = get_user_context(request.user)
             generated = invoke_generate_tasks_lambda(
-                f"Workflow: {workflow.name}\nDescription: {workflow.description}"
+                f"Workflow: {workflow.name}\nDescription: {workflow.description}",
+                user_context=user_context,
             )
         except Exception as exc:
             return 503, {"message": f"AI service unavailable: {exc}"}
@@ -299,6 +306,7 @@ def generate_tasks(request: HttpRequest, workflow_id: int):
         created_tasks.append(task)
 
     cache.delete("dashboard:stats")
+    track_action(request, "generated_tasks", "workflow", workflow.name, workflow.id)
     return 200, {"tasks": created_tasks}
 
 
@@ -356,6 +364,7 @@ def create_task(request: HttpRequest, data: TaskIn):
         performed_by=request.user,
     )
     cache.delete("dashboard:stats")
+    track_action(request, "created", "task", task.title, task.id)
     return 201, task
 
 
@@ -444,6 +453,7 @@ def transition_task(request: HttpRequest, task_id: int, data: TaskTransitionIn):
         request.user.email,
     )
     cache.delete("dashboard:stats")
+    track_action(request, "transitioned", "task", task.title, task.id)
     return 200, task
 
 
@@ -477,4 +487,5 @@ def assign_task(request: HttpRequest, task_id: int, data: TaskAssignIn):
         performed_by=request.user,
     )
     cache.delete("dashboard:stats")
+    track_action(request, "assigned", "task", task.title, task.id)
     return 200, task

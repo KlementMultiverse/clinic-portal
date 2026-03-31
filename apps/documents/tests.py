@@ -347,3 +347,276 @@ class DocumentEndpointTest(TenantTestCase):
         self.client.force_login(self.staff)
         resp = self.client.post("/api/documents/99999/summarize")
         self.assertEqual(resp.status_code, 404)
+
+
+class ValidateSummaryTest(TenantTestCase):
+    """Tests for _validate_summary output validation.
+
+    Per CLAUDE.md Rule #18: LLM output sanitized with strip_tags().
+    """
+
+    @classmethod
+    def setup_tenant(cls, tenant):
+        owner = _create_owner_user()
+        tenant.owner = owner
+        tenant.name = "Validate Summary Clinic"
+
+    def test_strips_reasoning_block(self):
+        """Reasoning tags and their content are removed."""
+        from apps.documents.services import _validate_summary
+
+        raw = (
+            "<reasoning>This is internal analysis</reasoning>\n"
+            "Summary: The document covers quarterly results."
+        )
+        result = _validate_summary(raw)
+        self.assertNotIn("reasoning", result)
+        self.assertNotIn("internal analysis", result)
+        self.assertIn("quarterly results", result)
+
+    def test_extracts_after_summary_prefix(self):
+        """Text after 'Summary:' is extracted."""
+        from apps.documents.services import _validate_summary
+
+        raw = "Some preamble text\nSummary: The actual summary content."
+        result = _validate_summary(raw)
+        self.assertEqual(result, "The actual summary content.")
+
+    def test_strips_html_tags(self):
+        """HTML tags are sanitized from output."""
+        from apps.documents.services import _validate_summary
+
+        raw = "Summary: <b>Bold</b> text and <script>alert('xss')</script> danger."
+        result = _validate_summary(raw)
+        self.assertNotIn("<b>", result)
+        self.assertNotIn("<script>", result)
+        self.assertIn("Bold", result)
+
+    def test_empty_output_returns_fallback(self):
+        """Empty or whitespace-only output returns 'Summary unavailable'."""
+        from apps.documents.services import _validate_summary
+
+        self.assertEqual(_validate_summary(""), "Summary unavailable")
+        self.assertEqual(_validate_summary("   "), "Summary unavailable")
+
+    def test_truncates_long_output(self):
+        """Output exceeding 500 words is truncated."""
+        from apps.documents.services import _validate_summary
+
+        long_text = " ".join(["word"] * 600)
+        result = _validate_summary(f"Summary: {long_text}")
+        self.assertTrue(result.endswith("... [summary truncated]"))
+        # 500 words + the truncation suffix
+        self.assertLessEqual(len(result.split()), 503)
+
+    def test_plain_text_passes_through(self):
+        """Plain text without reasoning or Summary: prefix passes through."""
+        from apps.documents.services import _validate_summary
+
+        raw = "This is a simple summary of the document."
+        result = _validate_summary(raw)
+        self.assertEqual(result, "This is a simple summary of the document.")
+
+
+class ValidateTasksJsonTest(TenantTestCase):
+    """Tests for _validate_tasks_json output validation.
+
+    Per CLAUDE.md Rule #18: LLM output sanitized with strip_tags().
+    """
+
+    @classmethod
+    def setup_tenant(cls, tenant):
+        owner = _create_owner_user()
+        tenant.owner = owner
+        tenant.name = "Validate Tasks Clinic"
+
+    def test_valid_json_returns_tasks(self):
+        """Valid JSON with tasks array returns cleaned list."""
+        from apps.documents.services import _validate_tasks_json
+
+        raw = json.dumps(
+            {
+                "tasks": [
+                    {"title": "Step 1", "description": "Do the first thing."},
+                    {"title": "Step 2", "description": "Do the second thing."},
+                ]
+            }
+        )
+        result = _validate_tasks_json(raw)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["title"], "Step 1")
+
+    def test_invalid_json_returns_none(self):
+        """Invalid JSON returns None."""
+        from apps.documents.services import _validate_tasks_json
+
+        result = _validate_tasks_json("this is not json at all")
+        self.assertIsNone(result)
+
+    def test_extracts_json_from_markdown_fences(self):
+        """JSON inside markdown code fences is extracted."""
+        from apps.documents.services import _validate_tasks_json
+
+        raw = (
+            "Here is the output:\n"
+            "```json\n"
+            '{"tasks": [{"title": "Task A", "description": "Desc A"}]}\n'
+            "```"
+        )
+        result = _validate_tasks_json(raw)
+        self.assertIsNotNone(result)
+        self.assertEqual(result[0]["title"], "Task A")
+
+    def test_empty_tasks_returns_none(self):
+        """Empty tasks array returns None."""
+        from apps.documents.services import _validate_tasks_json
+
+        result = _validate_tasks_json('{"tasks": []}')
+        self.assertIsNone(result)
+
+    def test_strips_html_from_tasks(self):
+        """HTML tags are stripped from task titles and descriptions."""
+        from apps.documents.services import _validate_tasks_json
+
+        raw = json.dumps(
+            {
+                "tasks": [
+                    {
+                        "title": "<b>Bold Task</b>",
+                        "description": "<script>xss</script>Safe desc.",
+                    },
+                ]
+            }
+        )
+        result = _validate_tasks_json(raw)
+        self.assertIsNotNone(result)
+        self.assertEqual(result[0]["title"], "Bold Task")
+        self.assertNotIn("<script>", result[0]["description"])
+
+    def test_title_over_100_chars_excluded(self):
+        """Tasks with titles over 100 chars are excluded."""
+        from apps.documents.services import _validate_tasks_json
+
+        raw = json.dumps(
+            {
+                "tasks": [
+                    {"title": "A" * 101, "description": "Too long title."},
+                    {"title": "Valid", "description": "Ok."},
+                ]
+            }
+        )
+        result = _validate_tasks_json(raw)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["title"], "Valid")
+
+    def test_missing_tasks_key_returns_none(self):
+        """JSON without 'tasks' key returns None."""
+        from apps.documents.services import _validate_tasks_json
+
+        result = _validate_tasks_json('{"items": []}')
+        self.assertIsNone(result)
+
+
+@CACHE_OVERRIDE
+class GenerateTasksReflexionTest(TenantTestCase):
+    """Tests for _generate_tasks_via_llm reflexion retry logic."""
+
+    @classmethod
+    def setup_tenant(cls, tenant):
+        owner = _create_owner_user()
+        tenant.owner = owner
+        tenant.name = "Reflexion Test Clinic"
+
+    @patch("apps.documents.services._invoke_llm")
+    def test_reflexion_retry_on_invalid_first_response(self, mock_llm):
+        """When first LLM call returns invalid JSON, reflexion retry succeeds."""
+        from apps.documents.services import _generate_tasks_via_llm
+
+        valid_json = json.dumps(
+            {
+                "tasks": [
+                    {"title": "Task 1", "description": "First task."},
+                    {"title": "Task 2", "description": "Second task."},
+                ]
+            }
+        )
+        # First call returns garbage, second call returns valid JSON
+        mock_llm.side_effect = ["not valid json", valid_json]
+
+        result = _generate_tasks_via_llm("Test workflow description")
+        self.assertEqual(len(result), 2)
+        self.assertEqual(mock_llm.call_count, 2)
+
+    @patch("apps.documents.services._invoke_llm")
+    def test_reflexion_raises_after_two_failures(self, mock_llm):
+        """When both LLM calls return invalid JSON, RuntimeError is raised."""
+        from apps.documents.services import _generate_tasks_via_llm
+
+        mock_llm.return_value = "still not json"
+
+        with self.assertRaises(RuntimeError) as ctx:
+            _generate_tasks_via_llm("Bad workflow")
+        self.assertIn("could not generate tasks", str(ctx.exception))
+        self.assertEqual(mock_llm.call_count, 2)
+
+    @patch("apps.documents.services._invoke_llm")
+    def test_no_retry_when_first_response_valid(self, mock_llm):
+        """When first LLM call returns valid JSON, no retry occurs."""
+        from apps.documents.services import _generate_tasks_via_llm
+
+        valid_json = json.dumps(
+            {"tasks": [{"title": "Only Task", "description": "Done."}]}
+        )
+        mock_llm.return_value = valid_json
+
+        result = _generate_tasks_via_llm("Simple workflow")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(mock_llm.call_count, 1)
+
+
+@CACHE_OVERRIDE
+class SummarizeViaLlmTest(TenantTestCase):
+    """Tests for _summarize_via_llm with structured prompting."""
+
+    @classmethod
+    def setup_tenant(cls, tenant):
+        owner = _create_owner_user()
+        tenant.owner = owner
+        tenant.name = "Summarize LLM Clinic"
+
+    @patch("apps.documents.services._invoke_llm")
+    def test_summary_strips_reasoning_from_llm_output(self, mock_llm):
+        """LLM output with reasoning block is cleaned before return."""
+        from apps.documents.services import _summarize_via_llm
+
+        mock_llm.return_value = (
+            "<reasoning>Document is a quarterly report.</reasoning>\n"
+            "Summary: The clinic saw 200 patients in Q3."
+        )
+        result = _summarize_via_llm("Some document text")
+        self.assertNotIn("reasoning", result)
+        self.assertIn("200 patients", result)
+
+    @patch("apps.documents.services._invoke_llm")
+    def test_summary_passes_temperature(self, mock_llm):
+        """_summarize_via_llm passes temperature=0.2 to _invoke_llm."""
+        from apps.documents.services import _summarize_via_llm
+
+        mock_llm.return_value = "Summary: Test result."
+        _summarize_via_llm("Some text")
+        call_kwargs = mock_llm.call_args
+        self.assertEqual(
+            call_kwargs[1].get(
+                "temperature", call_kwargs[0][2] if len(call_kwargs[0]) > 2 else None
+            ),
+            0.2,
+        )
+
+    @patch("apps.documents.services._invoke_llm")
+    def test_summary_empty_llm_response_returns_fallback(self, mock_llm):
+        """Empty LLM response returns 'Summary unavailable'."""
+        from apps.documents.services import _summarize_via_llm
+
+        mock_llm.return_value = ""
+        result = _summarize_via_llm("Some text")
+        self.assertEqual(result, "Summary unavailable")
