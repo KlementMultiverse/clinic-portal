@@ -72,7 +72,7 @@ Clinics visit a public landing page, sign up to create their workspace, and are 
 - [ ] Django Ninja auth router: login, register, logout, me endpoints
 - [ ] Session-based auth with Redis backend
 - [ ] Tenant signup flow (creates Tenant + Domain + admin User atomically)
-- [ ] Staff management endpoints: list, invite (create account), remove (admin only)
+- [ ] Staff management endpoints: list, add-by-email (create/find user + link to tenant), remove (admin only)
 - [ ] TenantAccessMiddleware integration test
 
 ### Phase 3: Workflows + Tasks + AuditLog
@@ -151,8 +151,8 @@ When they attempt to access tenant B's subdomain
 Then TenantAccessMiddleware blocks the request and returns a 403
 
 Given an admin on a tenant
-When they invite a new staff member by providing name, email, and password
-Then a new user is created with role=staff and associated with the current tenant
+When they add a staff member by providing their email address (and name/password for new users)
+Then the user is created (or existing user found by email) with role=staff and associated with the current tenant (note: SPEC.md excludes email/SMS notifications — "by email" means identifying users by email address, not sending invitation emails)
 
 Given the dashboard endpoint is called
 When there are 3 workflows, 10 tasks (4 completed, 3 in_progress, 2 assigned, 1 created), and 5 documents
