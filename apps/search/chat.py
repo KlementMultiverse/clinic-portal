@@ -193,6 +193,24 @@ def chat(user, message, thread_id=None):
     history = _format_history(thread)
     user_name = user.name or user.email.split("@")[0]
 
+    # Get user's last 5 searches from SearchHistory for context
+    from apps.search.models import SearchHistory
+
+    recent_searches = SearchHistory.objects.filter(user=user).order_by("-created_at")[
+        :5
+    ]
+    search_context = ""
+    if recent_searches:
+        search_context = "\nUSER'S RECENT SEARCHES (from Search tab):\n"
+        for s in recent_searches:
+            search_context += (
+                f'- "{s.query}" → {len(s.trials_data)} trials, '
+                f"{len(s.papers_data)} papers"
+            )
+            if s.summary:
+                search_context += f" | Summary: {s.summary[:100]}..."
+            search_context += "\n"
+
     system_text = (
         f"You are a clinical research assistant helping {user_name}. "
         "You have access to clinical trials and research papers.\n\n"
@@ -204,19 +222,24 @@ def chat(user, message, thread_id=None):
         "- No markdown formatting — plain text with dashes (-) "
         "for lists\n"
         "- Remember the conversation — don't repeat yourself\n"
-        "- If the user greets you, respond warmly and ask how "
-        "you can help with their clinical questions\n"
+        "- If the user greets you, respond warmly using their "
+        "name and ask how you can help\n"
+        "- If the user asks about previous/last searches, refer "
+        "to their RECENT SEARCHES listed below\n"
         "- If you don't have data on something, say so and "
         "suggest they ask a more specific question\n"
     )
 
+    if search_context:
+        system_text += search_context
+
     if context:
-        system_text += f"\nCLINICAL DATA:\n{context}\n"
+        system_text += f"\nCURRENT SEARCH CONTEXT:\n{context}\n"
     else:
         system_text += (
-            "\nNo clinical data loaded yet. If the user asks a "
-            "clinical question, you'll automatically search for "
-            "relevant trials and papers.\n"
+            "\nNo search data loaded in this conversation yet. "
+            "If the user asks a clinical question, you'll "
+            "automatically search for relevant trials and papers.\n"
         )
 
     api_messages = [
