@@ -6,6 +6,7 @@ from ninja import Router, Schema
 from ninja.errors import HttpError
 from ninja.security import django_auth
 
+from apps.documents.services import invoke_generate_tasks_lambda
 from apps.users.models import User
 from apps.workflows.models import AuditLog, Task, Workflow
 
@@ -77,6 +78,10 @@ class AuditLogOut(Schema):
 
 class MessageOut(Schema):
     message: str
+
+
+class GenerateTasksOut(Schema):
+    tasks: list[TaskOut]
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +214,60 @@ def delete_workflow(request: HttpRequest, workflow_id: int):
         performed_by=request.user,
     )
     return 200, {"message": "Workflow deleted."}
+
+
+@workflow_router.post(
+    "/{workflow_id}/generate-tasks",
+    response={200: GenerateTasksOut, 403: MessageOut, 404: MessageOut, 503: MessageOut},
+)
+def generate_tasks(request: HttpRequest, workflow_id: int):
+    """Generate tasks for a workflow using AI (Lambda). Admin only.
+
+    Per CLAUDE.md Rule #8: Lambda invocation via boto3 -- NEVER call OpenAI directly.
+    Per CLAUDE.md Rule #12: AuditLog entry created for each generated task.
+
+    Error responses:
+    - 401 Unauthorized: not authenticated
+    - 403 Forbidden: not an admin
+    - 404 Not Found: workflow does not exist
+    - 503 Service Unavailable: Lambda invocation failure
+    """
+    _require_admin(request)
+    try:
+        workflow = Workflow.objects.get(pk=workflow_id)
+    except Workflow.DoesNotExist:
+        return 404, {"message": "Workflow not found."}
+
+    try:
+        generated = invoke_generate_tasks_lambda(
+            f"Workflow: {workflow.name}\nDescription: {workflow.description}"
+        )
+    except Exception as exc:
+        return 503, {"message": f"AI service unavailable: {exc}"}
+
+    created_tasks = []
+    for task_data in generated:
+        title = task_data.get("title", "")
+        description = task_data.get("description", "")
+        if not title:
+            continue
+        task = Task.objects.create(
+            workflow=workflow,
+            title=title,
+            description=description,
+            status="created",
+            created_by=request.user,
+        )
+        AuditLog.objects.create(
+            entity_type="task",
+            entity_id=task.id,
+            action="created",
+            details={"source": "ai_generated", "workflow_id": workflow.id},
+            performed_by=request.user,
+        )
+        created_tasks.append(task)
+
+    return 200, {"tasks": created_tasks}
 
 
 # ---------------------------------------------------------------------------

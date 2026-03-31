@@ -1,4 +1,5 @@
 import json
+from unittest.mock import patch
 
 from django.db import connection
 from django.test import override_settings
@@ -396,3 +397,156 @@ class TaskEndpointTest(TenantTestCase):
             {"new_status": "assigned"},
         )
         self.assertEqual(resp.status_code, 200)
+
+
+@CACHE_OVERRIDE
+class GenerateTasksEndpointTest(TenantTestCase):
+    """Tests for POST /api/workflows/{id}/generate-tasks endpoint.
+
+    Uses TenantTestCase per CLAUDE.md testing rules.
+    Per CLAUDE.md Rule #8: Lambda invocation via boto3 -- all boto3 calls mocked.
+    """
+
+    @classmethod
+    def setup_tenant(cls, tenant):
+        owner = _create_owner_user()
+        tenant.owner = owner
+        tenant.name = "Test Clinic GenTasks"
+
+    @classmethod
+    def get_test_schema_name(cls):
+        return "test_gen_tasks"
+
+    @classmethod
+    def get_test_tenant_domain(cls):
+        return "gentasks.tenant.test.com"
+
+    def setUp(self):
+        super().setUp()
+        self.client = TenantClient(self.tenant)
+        connection.set_schema_to_public()
+        self.admin = User.objects.create_user(
+            email="gen-admin@test.com",
+            password="adminpass123",
+        )
+        self.admin.role = "admin"
+        self.admin.name = "Admin"
+        self.admin.save()
+        self.staff = User.objects.create_user(
+            email="gen-staff@test.com",
+            password="staffpass123",
+        )
+        self.staff.role = "staff"
+        self.staff.name = "Staff"
+        self.staff.save()
+        self.tenant.add_user(self.admin)
+        self.tenant.add_user(self.staff)
+        connection.set_tenant(self.tenant)
+        # Create a workflow
+        self.workflow = Workflow.objects.create(
+            name="Onboarding",
+            description="New hire onboarding process",
+            created_by=self.admin,
+        )
+
+    def _post_json(self, url, data=None):
+        return self.client.post(
+            url,
+            data=json.dumps(data) if data else None,
+            content_type="application/json",
+        )
+
+    @patch("apps.workflows.api.invoke_generate_tasks_lambda")
+    def test_generate_tasks_creates_task_records(self, mock_lambda):
+        """Generate-tasks creates Task records from Lambda response."""
+        mock_lambda.return_value = [
+            {"title": "Set up workstation", "description": "Prepare desk and computer"},
+            {"title": "HR orientation", "description": "Complete HR paperwork"},
+        ]
+        self.client.force_login(self.admin)
+        resp = self.client.post(
+            f"/api/workflows/{self.workflow.id}/generate-tasks",
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(len(data["tasks"]), 2)
+        self.assertEqual(data["tasks"][0]["title"], "Set up workstation")
+        self.assertEqual(data["tasks"][1]["title"], "HR orientation")
+        # Verify tasks exist in DB with correct status
+        tasks = Task.objects.filter(workflow=self.workflow)
+        self.assertEqual(tasks.count(), 2)
+        for task in tasks:
+            self.assertEqual(task.status, "created")
+            self.assertEqual(task.created_by, self.admin)
+
+    @patch("apps.workflows.api.invoke_generate_tasks_lambda")
+    def test_generate_tasks_creates_audit_log_entries(self, mock_lambda):
+        """Generate-tasks creates AuditLog entries for each task."""
+        mock_lambda.return_value = [
+            {"title": "Task A", "description": "Desc A"},
+            {"title": "Task B", "description": "Desc B"},
+        ]
+        self.client.force_login(self.admin)
+        # Clear existing audit logs
+        AuditLog.objects.all().delete()
+        self.client.post(
+            f"/api/workflows/{self.workflow.id}/generate-tasks",
+            content_type="application/json",
+        )
+        logs = AuditLog.objects.filter(entity_type="task", action="created")
+        self.assertEqual(logs.count(), 2)
+        for log in logs:
+            self.assertEqual(log.details.get("source"), "ai_generated")
+            self.assertEqual(log.details.get("workflow_id"), self.workflow.id)
+            self.assertEqual(log.performed_by, self.admin)
+
+    @patch("apps.workflows.api.invoke_generate_tasks_lambda")
+    def test_generate_tasks_handles_lambda_error_503(self, mock_lambda):
+        """Lambda failure returns 503 with error message."""
+        mock_lambda.side_effect = RuntimeError("AI service unavailable (timeout)")
+        self.client.force_login(self.admin)
+        resp = self.client.post(
+            f"/api/workflows/{self.workflow.id}/generate-tasks",
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 503)
+        self.assertIn("AI service unavailable", resp.json()["message"])
+        # No tasks should be created
+        self.assertEqual(Task.objects.filter(workflow=self.workflow).count(), 0)
+
+    def test_generate_tasks_requires_admin(self):
+        """Staff users cannot call generate-tasks (403)."""
+        self.client.force_login(self.staff)
+        resp = self.client.post(
+            f"/api/workflows/{self.workflow.id}/generate-tasks",
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 403)
+
+    def test_generate_tasks_workflow_not_found_404(self):
+        """Generate-tasks on non-existent workflow returns 404."""
+        self.client.force_login(self.admin)
+        resp = self.client.post(
+            "/api/workflows/99999/generate-tasks",
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 404)
+
+    @patch("apps.workflows.api.invoke_generate_tasks_lambda")
+    def test_generate_tasks_skips_empty_titles(self, mock_lambda):
+        """Tasks with empty titles are skipped."""
+        mock_lambda.return_value = [
+            {"title": "Valid task", "description": "Has a title"},
+            {"title": "", "description": "No title, should be skipped"},
+            {"description": "Missing title key entirely"},
+        ]
+        self.client.force_login(self.admin)
+        resp = self.client.post(
+            f"/api/workflows/{self.workflow.id}/generate-tasks",
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(len(data["tasks"]), 1)
+        self.assertEqual(data["tasks"][0]["title"], "Valid task")
