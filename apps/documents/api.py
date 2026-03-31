@@ -1,6 +1,8 @@
+import logging
 from datetime import datetime
 from typing import Optional
 
+from django.core.cache import cache
 from django.db import connection
 from django.http import HttpRequest
 from ninja import Router, Schema
@@ -15,6 +17,8 @@ from apps.documents.services import (
     invoke_summarize_lambda,
 )
 from apps.workflows.models import AuditLog
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Schemas -- Per CLAUDE.md Rule #1, using Django Ninja Schema (Pydantic)
@@ -109,6 +113,7 @@ def list_documents(
     Error responses:
     - 401 Unauthorized: not authenticated
     """
+    logger.info("documents.list called by user=%s", request.user.email)
     qs = Document.objects.all()
     if workflow_id is not None:
         qs = qs.filter(workflow_id=workflow_id)
@@ -181,6 +186,7 @@ def create_document(request: HttpRequest, data: DocumentIn):
             return 400, {"message": "Task not found."}
 
     document = Document.objects.create(**kwargs)
+    logger.info("Document created: id=%d, name=%s", document.id, document.name)
 
     AuditLog.objects.create(
         entity_type="document",
@@ -190,6 +196,7 @@ def create_document(request: HttpRequest, data: DocumentIn):
         performed_by=request.user,
     )
 
+    cache.delete("dashboard:stats")
     return 201, document
 
 
@@ -207,12 +214,18 @@ def get_download_url(request: HttpRequest, document_id: int):
     - 401 Unauthorized: not authenticated
     - 404 Not Found: document does not exist
     """
+    cache_key = f"s3:download:{document_id}"
+    cached = cache.get(cache_key)
+    if cached:
+        return 200, {"download_url": cached}
+
     try:
         document = Document.objects.get(pk=document_id)
     except Document.DoesNotExist:
         return 404, {"message": "Document not found."}
 
     url = generate_download_url(document.s3_key)
+    cache.set(cache_key, url, 840)
     return 200, {"download_url": url}
 
 
@@ -236,17 +249,27 @@ def summarize_document(request: HttpRequest, document_id: int):
     except Document.DoesNotExist:
         return 404, {"message": "Document not found."}
 
+    cache_key = f"llm:summary:{document_id}"
+    cached = cache.get(cache_key)
+    if cached:
+        document.summary = cached
+        document.save(update_fields=["summary"])
+        return 200, {"id": document.id, "summary": cached}
+
+    logger.info("Document summarize: id=%d", document_id)
     try:
         summary = invoke_summarize_lambda(
             f"Document: {document.name}, Type: {document.content_type}"
         )
     except Exception as e:
+        logger.error("Document operation failed: %s", str(e), exc_info=True)
         return 500, {"message": f"Summarization failed: {e}"}
 
     from django.utils.html import strip_tags
 
     document.summary = strip_tags(summary)
     document.save(update_fields=["summary"])
+    cache.set(cache_key, summary, 86400)
 
     AuditLog.objects.create(
         entity_type="document",
@@ -283,6 +306,7 @@ def delete_document(request: HttpRequest, document_id: int):
     doc_id = document.id
     doc_s3_key = document.s3_key
     doc_name = document.name
+    logger.info("Document deleted: id=%d by user=%s", doc_id, request.user.email)
 
     try:
         delete_s3_object(doc_s3_key)
@@ -299,4 +323,7 @@ def delete_document(request: HttpRequest, document_id: int):
         performed_by=request.user,
     )
 
+    cache.delete(f"s3:download:{doc_id}")
+    cache.delete(f"llm:summary:{doc_id}")
+    cache.delete("dashboard:stats")
     return 200, {"message": "Document deleted."}

@@ -1,3 +1,5 @@
+import logging
+
 from django.http import HttpRequest
 from ninja import Router
 from ninja.errors import HttpError
@@ -7,6 +9,8 @@ from tenant_users.tenants.tasks import provision_tenant
 
 from apps.tenants.models import Tenant
 from apps.users.api import MessageOut, TenantCreateIn, TenantOut
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Tenant Router — /api/tenants/
@@ -41,6 +45,13 @@ def create_tenant(request: HttpRequest, data: TenantCreateIn):
         return 409, {"message": "A tenant with this subdomain already exists."}
     except Exception as e:
         raise HttpError(400, str(e))
+
+    logger.info(
+        "Tenant created: name=%s, subdomain=%s by user=%s",
+        data.name,
+        data.subdomain,
+        request.user.email,
+    )
 
     # Set the user's role to admin for this tenant
     request.user.role = "admin"

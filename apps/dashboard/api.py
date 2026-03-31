@@ -1,3 +1,6 @@
+import logging
+
+from django.core.cache import cache
 from django.db.models import Count
 from django.http import HttpRequest
 from ninja import Router, Schema
@@ -6,6 +9,8 @@ from ninja.security import django_auth
 from apps.documents.models import Document
 from apps.users.models import User
 from apps.workflows.models import Task, Workflow
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Schemas -- Per CLAUDE.md Rule #1, using Django Ninja Schema (Pydantic)
@@ -37,6 +42,11 @@ def get_stats(request: HttpRequest):
     Error responses:
     - 401 Unauthorized: not authenticated
     """
+    logger.info("Dashboard stats requested by user=%s", request.user.email)
+    cached = cache.get("dashboard:stats")
+    if cached:
+        return cached
+
     total_workflows = Workflow.objects.count()
     total_documents = Document.objects.count()
 
@@ -52,9 +62,11 @@ def get_stats(request: HttpRequest):
     )
     tasks_by_status = {item["status"]: item["count"] for item in status_counts}
 
-    return 200, {
+    result = {
         "total_workflows": total_workflows,
         "total_documents": total_documents,
         "total_staff": total_staff,
         "tasks_by_status": tasks_by_status,
     }
+    cache.set("dashboard:stats", result, 60)
+    return 200, result

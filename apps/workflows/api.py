@@ -1,6 +1,9 @@
+import hashlib
+import logging
 from datetime import datetime
 from typing import Optional
 
+from django.core.cache import cache
 from django.http import HttpRequest
 from ninja import Router, Schema
 from ninja.errors import HttpError
@@ -9,6 +12,8 @@ from ninja.security import django_auth
 from apps.documents.services import invoke_generate_tasks_lambda
 from apps.users.models import User
 from apps.workflows.models import AuditLog, Task, Workflow
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Schemas — Per CLAUDE.md Rule #1, using Django Ninja Schema (Pydantic)
@@ -108,8 +113,13 @@ def list_workflows(request: HttpRequest):
     Error responses:
     - 401 Unauthorized: not authenticated
     """
+    cached = cache.get("workflows:list")
+    if cached:
+        return cached
     workflows = Workflow.objects.all()
-    return 200, list(workflows)
+    result = list(workflows)
+    cache.set("workflows:list", result, 30)
+    return 200, result
 
 
 @workflow_router.post("/", response={201: WorkflowOut, 403: MessageOut})
@@ -133,6 +143,14 @@ def create_workflow(request: HttpRequest, data: WorkflowIn):
         action="created",
         performed_by=request.user,
     )
+    logger.info(
+        "Workflow created: id=%d, name=%s by user=%s",
+        workflow.id,
+        workflow.name,
+        request.user.email,
+    )
+    cache.delete("workflows:list")
+    cache.delete("dashboard:stats")
     return 201, workflow
 
 
@@ -186,6 +204,8 @@ def update_workflow(request: HttpRequest, workflow_id: int, data: WorkflowIn):
         action="updated",
         performed_by=request.user,
     )
+    cache.delete("workflows:list")
+    cache.delete("dashboard:stats")
     return 200, workflow
 
 
@@ -213,6 +233,8 @@ def delete_workflow(request: HttpRequest, workflow_id: int):
         action="deleted",
         performed_by=request.user,
     )
+    cache.delete("workflows:list")
+    cache.delete("dashboard:stats")
     return 200, {"message": "Workflow deleted."}
 
 
@@ -238,12 +260,21 @@ def generate_tasks(request: HttpRequest, workflow_id: int):
     except Workflow.DoesNotExist:
         return 404, {"message": "Workflow not found."}
 
-    try:
-        generated = invoke_generate_tasks_lambda(
-            f"Workflow: {workflow.name}\nDescription: {workflow.description}"
-        )
-    except Exception as exc:
-        return 503, {"message": f"AI service unavailable: {exc}"}
+    logger.info("Generate tasks for workflow=%d", workflow_id)
+    desc_hash = hashlib.md5(workflow.description.encode()).hexdigest()[:8]
+    cache_key = f"llm:tasks:{workflow_id}:{desc_hash}"
+    cached = cache.get(cache_key)
+
+    if cached:
+        generated = cached
+    else:
+        try:
+            generated = invoke_generate_tasks_lambda(
+                f"Workflow: {workflow.name}\nDescription: {workflow.description}"
+            )
+        except Exception as exc:
+            return 503, {"message": f"AI service unavailable: {exc}"}
+        cache.set(cache_key, generated, 3600)
 
     created_tasks = []
     for task_data in generated:
@@ -267,6 +298,7 @@ def generate_tasks(request: HttpRequest, workflow_id: int):
         )
         created_tasks.append(task)
 
+    cache.delete("dashboard:stats")
     return 200, {"tasks": created_tasks}
 
 
@@ -323,6 +355,7 @@ def create_task(request: HttpRequest, data: TaskIn):
         action="created",
         performed_by=request.user,
     )
+    cache.delete("dashboard:stats")
     return 201, task
 
 
@@ -392,10 +425,25 @@ def transition_task(request: HttpRequest, task_id: int, data: TaskTransitionIn):
         task = Task.objects.get(pk=task_id)
     except Task.DoesNotExist:
         return 404, {"message": "Task not found."}
+    old_status = task.status
     try:
         task.transition_to(data.new_status, request.user)
     except ValueError as e:
+        logger.warning(
+            "Invalid transition attempted: task=%d, %s → %s",
+            task_id,
+            old_status,
+            data.new_status,
+        )
         return 400, {"message": str(e)}
+    logger.info(
+        "Task %d transitioned: %s → %s by %s",
+        task_id,
+        old_status,
+        data.new_status,
+        request.user.email,
+    )
+    cache.delete("dashboard:stats")
     return 200, task
 
 
@@ -421,10 +469,12 @@ def assign_task(request: HttpRequest, task_id: int, data: TaskAssignIn):
         return 404, {"message": "User not found."}
     task.assigned_to = user
     task.save()
+    logger.info("Task %d assigned to user=%s", task_id, user.email)
     AuditLog.objects.create(
         entity_type="task",
         entity_id=task.id,
         action=f"assigned_to:{user.email}",
         performed_by=request.user,
     )
+    cache.delete("dashboard:stats")
     return 200, task

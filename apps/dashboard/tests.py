@@ -1,4 +1,4 @@
-
+from django.core.cache import cache
 from django.db import connection
 from django.test import override_settings
 from django_tenants.test.cases import TenantTestCase
@@ -68,6 +68,7 @@ class DashboardStatsTest(TenantTestCase):
 
     def setUp(self):
         super().setUp()
+        cache.clear()
         self.client = TenantClient(self.tenant)
         # Users must be created in public schema per tenant-users
         connection.set_schema_to_public()

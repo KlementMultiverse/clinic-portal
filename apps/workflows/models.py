@@ -1,5 +1,9 @@
+import logging
+
 from django.conf import settings
 from django.db import models
+
+logger = logging.getLogger(__name__)
 
 
 class AuditLog(models.Model):
@@ -92,10 +96,20 @@ class Task(models.Model):
         """
         valid = self.VALID_TRANSITIONS.get(self.status, [])
         if new_status not in valid:
+            logger.warning(
+                "Invalid transition: task=%d, %s → %s", self.id, self.status, new_status
+            )
             raise ValueError(f"Cannot transition from {self.status} to {new_status}")
         old_status = self.status
         self.status = new_status
         self.save()
+        logger.info(
+            "Task %d transitioned: %s → %s by %s",
+            self.id,
+            old_status,
+            new_status,
+            user.email,
+        )
         AuditLog.objects.create(
             entity_type="task",
             entity_id=self.id,

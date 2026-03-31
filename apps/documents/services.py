@@ -38,40 +38,94 @@ def generate_upload_url(filename, content_type):
     doc_uuid = str(uuid.uuid4())
     s3_key = f"{tenant_schema}/{doc_uuid}/{filename}"
 
-    s3_client = get_s3_client()
-    presigned = s3_client.generate_presigned_url(
-        "put_object",
-        Params={
-            "Bucket": settings.AWS_STORAGE_BUCKET_NAME,
-            "Key": s3_key,
-            "ContentType": content_type,
-        },
-        ExpiresIn=900,
-    )
+    try:
+        s3_client = get_s3_client()
+        presigned = s3_client.generate_presigned_url(
+            "put_object",
+            Params={
+                "Bucket": settings.AWS_STORAGE_BUCKET_NAME,
+                "Key": s3_key,
+                "ContentType": content_type,
+            },
+            ExpiresIn=900,
+        )
+    except botocore.exceptions.ClientError as exc:
+        logger.warning("S3 generate_upload_url error: %s", exc)
+        raise RuntimeError(f"Storage service error: {exc}") from exc
+    except (
+        botocore.exceptions.ReadTimeoutError,
+        botocore.exceptions.ConnectTimeoutError,
+    ) as exc:
+        logger.warning("S3 generate_upload_url timeout: %s", exc)
+        raise RuntimeError("Storage service unavailable (timeout)") from exc
+    except (
+        botocore.exceptions.NoCredentialsError,
+        botocore.exceptions.PartialCredentialsError,
+    ) as exc:
+        logger.error("AWS credentials error: %s", exc)
+        raise RuntimeError("Storage service unavailable (credentials)") from exc
+
+    logger.info("S3 generate_upload_url: key=%s", s3_key)
     return {"upload_url": presigned, "s3_key": s3_key}
 
 
 def generate_download_url(s3_key):
     """Generate presigned GET URL for S3 download. Expires in 15 minutes."""
-    s3_client = get_s3_client()
-    url = s3_client.generate_presigned_url(
-        "get_object",
-        Params={
-            "Bucket": settings.AWS_STORAGE_BUCKET_NAME,
-            "Key": s3_key,
-        },
-        ExpiresIn=900,
-    )
+    try:
+        s3_client = get_s3_client()
+        url = s3_client.generate_presigned_url(
+            "get_object",
+            Params={
+                "Bucket": settings.AWS_STORAGE_BUCKET_NAME,
+                "Key": s3_key,
+            },
+            ExpiresIn=900,
+        )
+    except botocore.exceptions.ClientError as exc:
+        logger.warning("S3 generate_download_url error: %s", exc)
+        raise RuntimeError(f"Storage service error: {exc}") from exc
+    except (
+        botocore.exceptions.ReadTimeoutError,
+        botocore.exceptions.ConnectTimeoutError,
+    ) as exc:
+        logger.warning("S3 generate_download_url timeout: %s", exc)
+        raise RuntimeError("Storage service unavailable (timeout)") from exc
+    except (
+        botocore.exceptions.NoCredentialsError,
+        botocore.exceptions.PartialCredentialsError,
+    ) as exc:
+        logger.error("AWS credentials error: %s", exc)
+        raise RuntimeError("Storage service unavailable (credentials)") from exc
+
+    logger.info("S3 generate_download_url: key=%s", s3_key)
     return url
 
 
 def delete_s3_object(s3_key):
     """Delete object from S3."""
-    s3_client = get_s3_client()
-    s3_client.delete_object(
-        Bucket=settings.AWS_STORAGE_BUCKET_NAME,
-        Key=s3_key,
-    )
+    try:
+        s3_client = get_s3_client()
+        s3_client.delete_object(
+            Bucket=settings.AWS_STORAGE_BUCKET_NAME,
+            Key=s3_key,
+        )
+    except botocore.exceptions.ClientError as exc:
+        logger.warning("S3 delete_object error: %s", exc)
+        raise RuntimeError(f"Storage service error: {exc}") from exc
+    except (
+        botocore.exceptions.ReadTimeoutError,
+        botocore.exceptions.ConnectTimeoutError,
+    ) as exc:
+        logger.warning("S3 delete_object timeout: %s", exc)
+        raise RuntimeError("Storage service unavailable (timeout)") from exc
+    except (
+        botocore.exceptions.NoCredentialsError,
+        botocore.exceptions.PartialCredentialsError,
+    ) as exc:
+        logger.error("AWS credentials error: %s", exc)
+        raise RuntimeError("Storage service unavailable (credentials)") from exc
+
+    logger.info("S3 delete_object: key=%s", s3_key)
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +168,7 @@ def _invoke_llm(messages, max_tokens=500):
 
 def _summarize_via_llm(text):
     """Summarize text directly via Bedrock (no Lambda)."""
+    logger.info("LLM invoke: task_type=%s", "summarize_document")
     messages = [
         {
             "role": "user",
@@ -124,11 +179,14 @@ def _summarize_via_llm(text):
             ),
         },
     ]
-    return _invoke_llm(messages, max_tokens=500)
+    result = _invoke_llm(messages, max_tokens=500)
+    logger.info("LLM result: %d chars", len(result))
+    return result
 
 
 def _generate_tasks_via_llm(workflow_description):
     """Generate tasks directly via Bedrock (no Lambda)."""
+    logger.info("LLM invoke: task_type=%s", "generate_tasks")
     messages = [
         {
             "role": "user",

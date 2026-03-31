@@ -1,3 +1,4 @@
+import logging
 import secrets
 from datetime import datetime
 from typing import Optional
@@ -11,11 +12,15 @@ from ninja.security import django_auth
 from apps.tenants.models import Tenant
 from apps.users.models import User
 
+logger = logging.getLogger(__name__)
+
 # ---------------------------------------------------------------------------
 # NinjaAPI instance — Per CLAUDE.md Rule #1, using Django Ninja for all API
 # routes. CSRF enabled for session-based authentication.
 # ---------------------------------------------------------------------------
-api = NinjaAPI(urls_namespace="api")  # CSRF enforced via django_auth (SessionAuth.csrf=True)
+api = NinjaAPI(
+    urls_namespace="api"
+)  # CSRF enforced via django_auth (SessionAuth.csrf=True)
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +112,7 @@ def register(request: HttpRequest, data: RegisterIn):
         return 409, {"message": "A user with this email already exists."}
     except ValueError as e:
         raise HttpError(400, str(e))
+    logger.info("User registered: email=%s", data.email)
     return 201, user
 
 
@@ -122,9 +128,11 @@ def login_view(request: HttpRequest, data: LoginIn):
     """
     user = authenticate(request, email=data.email, password=data.password)
     if user is None:
+        logger.warning("Login failed: email=%s", data.email)
         return 401, {"message": "Invalid email or password."}
     # Django rotates session key on login by default
     login(request, user)
+    logger.info("Login successful: email=%s", data.email)
     tenant_name = None
     if hasattr(request, "tenant") and request.tenant.schema_name != "public":
         tenant_name = request.tenant.name
@@ -144,6 +152,7 @@ def logout_view(request: HttpRequest):
     Error responses:
     - 401 Unauthorized: not authenticated
     """
+    logger.info("Logout: email=%s", request.user.email)
     logout(request)
     return 200, {"message": "Logged out successfully."}
 
@@ -264,6 +273,7 @@ def invite_staff(request: HttpRequest, data: StaffInviteIn):
     except ExistsError:
         return 409, {"message": "User is already a member of this tenant."}
 
+    logger.info("Staff invited: email=%s to tenant=%s", data.email, tenant.name)
     return 200, {
         "id": user.id,
         "email": user.email,
@@ -304,6 +314,7 @@ def remove_staff(request: HttpRequest, user_id: int):
     except User.DoesNotExist:
         return 404, {"message": "User is not a member of this tenant."}
 
+    logger.info("Staff removed: user_id=%d from tenant=%s", user_id, tenant.name)
     return 200, {"message": "User removed from tenant."}
 
 
