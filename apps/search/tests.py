@@ -644,6 +644,39 @@ class SearchEndpointTest(TenantTestCase):
         self.assertEqual(len(data), 20)  # max 20
         self.assertEqual(data[0]["query"], "pagination query 24")  # most recent
 
+    @patch("apps.search.api.summarize_search_results")
+    @patch("apps.search.api.run_search")
+    def test_history_pagination_55_searches(self, mock_run, mock_summarize):
+        """55 searches — history capped at 20, correct order."""
+        mock_run.return_value = ([], [])
+        mock_summarize.return_value = "."
+        self.client.force_login(self.user)
+        for i in range(55):
+            self._post("/api/search/", {"query": f"bulk query {i}"})
+        resp = self.client.get("/api/search/history")
+        data = resp.json()
+        self.assertEqual(len(data), 20)
+        self.assertEqual(data[0]["query"], "bulk query 54")
+        self.assertEqual(data[19]["query"], "bulk query 35")
+        # Total in DB is 55
+        self.assertEqual(SearchHistory.objects.filter(user=self.user).count(), 55)
+
+    # ─── 8b. PubMed returns 500 (separate from trials) ───
+    @patch("apps.search.services.httpx.AsyncClient")
+    def test_pubmed_500_graceful(self, mock_cls):
+        """PubMed returning 500 returns empty list."""
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "500", request=MagicMock(), response=MagicMock(status_code=500)
+        )
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_cls.return_value = mock_client
+        result = asyncio.run(_fetch_pubmed_papers("pubmed 500"))
+        self.assertEqual(result, [])
+
     # ─── 8. API returns 500 ───
     @patch("apps.search.services.httpx.AsyncClient")
     def test_api_500_graceful_fallback(self, mock_cls):

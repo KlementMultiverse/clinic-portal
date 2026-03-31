@@ -241,9 +241,7 @@ class TestWorkflows:
             if desc_field.count() > 0:
                 desc_field.first.fill("Created by Playwright E2E test")
             # Submit
-            submit = page.locator(
-                'button[type="submit"], button:has-text("Save")'
-            )
+            submit = page.locator('button[type="submit"], button:has-text("Save")')
             if submit.count() > 0:
                 submit.first.click()
                 page.wait_for_timeout(1500)
