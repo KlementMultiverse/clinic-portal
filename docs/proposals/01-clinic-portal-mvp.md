@@ -152,7 +152,7 @@ Then TenantAccessMiddleware blocks the request and returns a 403
 
 Given an admin on a tenant
 When they add a staff member by providing their email address and name
-Then the user is created with a temporary password (or existing user found by email) with role=staff and associated with the current tenant, and the user must set their own password on first login (admins never handle staff passwords directly)
+Then either: (a) a new user is created with a temporary password and `must_reset_password=True`, requiring them to set their own password on first login, or (b) an existing user found by email is simply associated with the current tenant with role=staff — no password reset forced for existing users. Admins never handle staff passwords directly.
 
 Given the dashboard endpoint is called
 When there are 3 workflows, 10 tasks (4 completed, 3 in_progress, 2 assigned, 1 created), and 5 documents
