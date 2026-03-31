@@ -722,6 +722,127 @@ def invoke_claude(prompt: str, max_tokens: int = 1024, temperature: float = 0.2)
 Environment variable needed: `AWS_BEARER_TOKEN_BEDROCK` (Bedrock API key, expires April 4, 2026).
 Model: `us.anthropic.claude-3-5-haiku-20241022-v1:0` (inference profile ID).
 
+## Clinical QA Search (the "QA system" feature)
+
+This is the clinical question-answering feature that makes this a "clinical QA system" — staff can search real medical databases and get AI-summarized answers.
+
+### How It Works
+```
+Staff types: "Phase 3 trials for metformin in Type 2 diabetes"
+    ↓
+App queries clinicaltrials.gov + PubMed in PARALLEL (asyncio.gather)
+    ↓
+Results formatted with source IDs (NCT IDs, PMIDs)
+    ↓
+Bedrock Claude 3.5 Haiku summarizes with citations
+    ↓
+Staff sees: AI summary + trial list + paper list
+    ↓
+Search saved to history (per tenant)
+```
+
+### New Model: SearchHistory (tenant schema)
+```python
+class SearchHistory(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    query = models.TextField()
+    summary = models.TextField(blank=True)
+    trials_data = models.JSONField(default=list)
+    papers_data = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+```
+
+### New Endpoints (tenant schema, under `/api/search/`)
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/api/search/` | Session | Search clinicaltrials.gov + PubMed, summarize with AI, save to history |
+| GET | `/api/search/history` | Session | List user's past searches (most recent first) |
+
+### POST /api/search/ — Request/Response
+```
+Request:  { "query": "metformin phase 3 diabetes" }
+Response: {
+    "summary": "Based on the available data, there are 4 active Phase 3 trials... [NCT12345678]...",
+    "trials": [
+        {"nct_id": "NCT12345678", "title": "...", "status": "Recruiting", "summary": "..."},
+        ...
+    ],
+    "papers": [
+        {"pmid": "12345", "title": "...", "authors": "...", "journal": "...", "pub_date": "..."},
+        ...
+    ],
+    "search_id": 1
+}
+```
+
+### External APIs (free, no keys needed)
+
+**clinicaltrials.gov v2 API:**
+```
+GET https://clinicaltrials.gov/api/v2/studies?query.term={query}&pageSize=10
+Response: { "studies": [{ "protocolSection": { "identificationModule": { "nctId", "briefTitle" }, "statusModule": { "overallStatus" }, "descriptionModule": { "briefSummary" } } }] }
+```
+
+**PubMed NCBI E-utilities:**
+```
+Step 1: GET https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term={query}&retmax=10&retmode=json
+Returns: { "esearchresult": { "idlist": ["12345", ...] } }
+
+Step 2: GET https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id={comma_ids}&retmode=json
+Returns: { "result": { "12345": { "title", "authors": [{ "name" }], "source", "pubdate" } } }
+```
+
+### RAG Pattern (Week 1 — MUST implement correctly)
+This IS a RAG pipeline:
+1. **Retrieve**: Fetch from clinicaltrials.gov + PubMed in parallel (httpx.AsyncClient, timeout=10s)
+2. **Format context**: Label trials with NCT IDs, papers with PMIDs, separate sections
+3. **Augmented generation**: Bedrock prompt says "use ONLY the provided context"
+4. **Citations required**: Every claim must reference [NCT...] or [PMID:...]
+5. **"I don't know" pathway**: If no results, say "No clinical trials or papers found for this query"
+6. **Cache**: Redis cache on search results (6hr TTL for trials, 7d for papers)
+
+### Summarization Prompt for Clinical QA
+```
+<system-reminder>
+You are a clinical research assistant summarizing search results.
+- Answer ONLY based on the trials and papers provided below
+- Cite every claim: [NCT...] for trials, [PMID: ...] for papers
+- NEVER make claims not supported by the provided context
+- If insufficient data, say "Based on the available results, there is insufficient data to draw conclusions on [specific aspect]"
+- Structure: Opening (1-2 sentences), Trial Landscape (active/completed/recruiting), Research Findings (key papers), Conclusion
+- Temperature: 0.2 (factual, deterministic)
+</system-reminder>
+
+CONTEXT:
+=== CLINICAL TRIALS (from clinicaltrials.gov) ===
+{formatted_trials_with_nct_ids}
+
+=== RESEARCH PAPERS (from PubMed) ===
+{formatted_papers_with_pmids}
+
+QUERY: {user_query}
+
+Summary:
+```
+
+### New Frontend Page: Clinical Search
+```
+8. **Clinical Search page**: Search input ("Ask a clinical question..."), loading spinner,
+   results: AI summary card (blue-tinted) + two columns (trials list + papers list).
+   Trial status badges: Recruiting=green, Completed=gray, Active=blue.
+   Papers link to PubMed: https://pubmed.ncbi.nlm.nih.gov/{pmid}/
+   Trials link to: https://clinicaltrials.gov/study/{nct_id}
+```
+
+### Implementation Notes
+- Add `apps/search/` as a new TENANT app
+- Add to TENANT_APPS in settings
+- Use `httpx.AsyncClient` for parallel API calls (add httpx to dependencies)
+- Cache search results in Redis with tenant-aware keys
+- The search page is accessible to all authenticated tenant members
+- Add SearchHistory count to dashboard stats
+
 ## What NOT to Build
 
 - No patient registry or medical records
