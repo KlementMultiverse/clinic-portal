@@ -3,7 +3,6 @@ import re
 
 from django.http import HttpRequest
 from ninja import Router
-from ninja.errors import HttpError
 from ninja.security import django_auth
 from tenant_users.tenants.models import ExistsError
 from tenant_users.tenants.tasks import provision_tenant
@@ -38,22 +37,52 @@ def create_tenant(request: HttpRequest, data: TenantCreateIn):
     - 401 Unauthorized: not authenticated
     - 409 Conflict: subdomain already taken
     """
-    subdomain = data.subdomain
+    subdomain = data.subdomain.lower().strip()
     if not re.match(r"^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$", subdomain):
-        return 400, {"message": "Invalid subdomain format."}
+        return 400, {
+            "message": "Subdomain must be 3-32 characters, "
+            "lowercase letters, numbers, and hyphens only."
+        }
     if subdomain in RESERVED_SUBDOMAINS:
-        return 400, {"message": "This subdomain is reserved."}
+        return 400, {
+            "message": f'"{subdomain}" is reserved. ' "Try a different subdomain."
+        }
+
+    # Check for existing clinic with same name
+    from apps.tenants.models import Domain
+
+    if (
+        Tenant.objects.filter(name__iexact=data.name)
+        .exclude(schema_name="public")
+        .exists()
+    ):
+        return 409, {
+            "message": f'A clinic named "{data.name}" already exists. '
+            "Please choose a different name."
+        }
+
+    # Check for existing subdomain
+    domain_name = f"{subdomain}.localhost"
+    if Domain.objects.filter(domain=domain_name).exists():
+        return 409, {
+            "message": f'The subdomain "{subdomain}" is already taken. '
+            "Please choose a different one."
+        }
 
     try:
         tenant, domain = provision_tenant(
             tenant_name=data.name,
-            tenant_slug=data.subdomain,
+            tenant_slug=subdomain,
             owner=request.user,
         )
     except ExistsError:
-        return 409, {"message": "A tenant with this subdomain already exists."}
+        return 409, {
+            "message": f'The subdomain "{subdomain}" is already taken. '
+            "Please choose a different one."
+        }
     except Exception as e:
-        raise HttpError(400, str(e))
+        logger.error("Tenant creation failed: %s", e, exc_info=True)
+        return 400, {"message": f"Workspace creation failed: {e}"}
 
     logger.info(
         "Tenant created: name=%s, subdomain=%s by user=%s",
