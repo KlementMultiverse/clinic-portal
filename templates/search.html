@@ -39,10 +39,10 @@
 </div>
 
 <!-- Search History -->
-<details style="margin-top:2rem;">
-    <summary>Search History</summary>
-    <div id="history-list"><p>Loading...</p></div>
-</details>
+<section id="history-section" style="margin-top:2rem;">
+    <h3>Search History</h3>
+    <div id="history-list"><p>Loading history...</p></div>
+</section>
 {% endblock %}
 
 {% block extra_js %}
@@ -208,21 +208,32 @@ document.getElementById('search-btn').addEventListener('click', async function()
 });
 
 async function loadHistory() {
-    var resp = await apiFetch('/api/search/history');
     var container = document.getElementById('history-list');
-    if (!resp.ok) { container.innerHTML = '<p>Failed to load.</p>'; return; }
-    var data = await resp.json();
-    if (data.length === 0) { container.innerHTML = '<p>No searches yet.</p>'; return; }
-    var html = '<table role="grid"><thead><tr><th>Query</th><th>Trials</th><th>Papers</th><th>Date</th></tr></thead><tbody>';
-    for (var i = 0; i < data.length; i++) {
-        var s = data[i];
-        html += '<tr style="cursor:pointer;" onclick="document.getElementById(\'search-input\').value=\'' + escapeHtml(s.query.replace(/'/g, "\\'")) + '\';document.getElementById(\'search-btn\').click();">';
-        html += '<td><a href="#">' + escapeHtml(s.query.substring(0, 60)) + '</a></td>';
-        html += '<td>' + s.trials_count + '</td><td>' + s.papers_count + '</td>';
-        html += '<td>' + new Date(s.created_at).toLocaleDateString() + '</td></tr>';
+    try {
+        var resp = await apiFetch('/api/search/history');
+        if (!resp.ok) {
+            container.innerHTML = '<p style="color:var(--pico-muted-color);">Could not load history.</p>';
+            return;
+        }
+        var data = await resp.json();
+        if (data.length === 0) {
+            container.innerHTML = '<p style="color:var(--pico-muted-color);">No searches yet. Try searching above.</p>';
+            return;
+        }
+        var html = '<table role="grid"><thead><tr><th>Query</th><th>Trials</th><th>Papers</th><th>Date</th></tr></thead><tbody>';
+        for (var i = 0; i < data.length; i++) {
+            var s = data[i];
+            var safeQuery = escapeHtml(s.query).replace(/'/g, '&#39;');
+            html += '<tr style="cursor:pointer;" onclick="document.getElementById(\'search-input\').value=\'' + safeQuery + '\';document.getElementById(\'search-btn\').click();">';
+            html += '<td style="color:var(--pico-primary);">' + escapeHtml(s.query.substring(0, 60)) + '</td>';
+            html += '<td>' + s.trials_count + '</td><td>' + s.papers_count + '</td>';
+            html += '<td>' + new Date(s.created_at).toLocaleDateString() + '</td></tr>';
+        }
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    } catch (err) {
+        container.innerHTML = '<p style="color:var(--pico-muted-color);">Error loading history.</p>';
     }
-    html += '</tbody></table>';
-    container.innerHTML = html;
 }
 loadHistory();
 </script>
