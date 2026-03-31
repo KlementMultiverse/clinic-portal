@@ -5,17 +5,17 @@
 <h2>Clinical QA Search</h2>
 <p>Search clinical trials and research papers from ClinicalTrials.gov and PubMed.</p>
 
-<form id="search-form">
+<div role="search">
+    <input type="text" id="search-input"
+           placeholder="Search clinical trials and papers... (e.g. SGLT2 inhibitors, metformin diabetes)"
+           style="width:100%; margin-bottom:.5rem;" required>
     <div style="display:flex; gap:.5rem; align-items:center;">
-        <input type="text" id="search-input"
-               placeholder="Search clinical trials and papers... (e.g. SGLT2 inhibitors, metformin diabetes)"
-               style="flex:1; margin-bottom:0;" required>
-        <button type="submit" id="search-btn" style="margin-bottom:0; white-space:nowrap;">Search</button>
-        <label style="display:flex; align-items:center; gap:.3rem; font-size:.85rem; white-space:nowrap; margin-bottom:0;">
-            <input type="checkbox" id="fresh-check" role="switch" style="width:auto; margin:0;"> Fresh
+        <button type="button" id="search-btn" style="width:auto; padding:.5rem 2rem;">Search</button>
+        <label style="display:flex; align-items:center; gap:.3rem; font-size:.85rem;">
+            <input type="checkbox" id="fresh-check" style="width:auto; margin:0;"> Fresh results
         </label>
     </div>
-</form>
+</div>
 
 <!-- AI Summary -->
 <article id="summary-card" style="display:none; background:var(--pico-card-background-color); border-left:4px solid var(--pico-primary); padding:1rem;">
@@ -154,8 +154,12 @@ function renderFilters() {
     container.innerHTML = html;
 }
 
-document.getElementById('search-form').addEventListener('submit', async function(e) {
-    e.preventDefault();
+// Enter key triggers search
+document.getElementById('search-input').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { e.preventDefault(); document.getElementById('search-btn').click(); }
+});
+
+document.getElementById('search-btn').addEventListener('click', async function() {
     var query = document.getElementById('search-input').value.trim();
     if (!query) return;
     var fresh = document.getElementById('fresh-check').checked;
