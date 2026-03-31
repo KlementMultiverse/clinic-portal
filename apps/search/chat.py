@@ -199,9 +199,7 @@ def chat(user, message, thread_id=None):
             )
 
     # Save assistant message
-    ChatMessage.objects.create(
-        thread=thread, role="assistant", content=response_text
-    )
+    ChatMessage.objects.create(thread=thread, role="assistant", content=response_text)
 
     return {
         "thread_id": thread.id,

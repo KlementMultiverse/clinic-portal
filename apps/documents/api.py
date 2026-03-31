@@ -205,7 +205,7 @@ def create_document(request: HttpRequest, data: DocumentIn):
 
 @document_router.get(
     "/{document_id}/download-url",
-    response={200: DownloadUrlOut, 404: MessageOut},
+    response={200: DownloadUrlOut, 403: MessageOut, 404: MessageOut},
 )
 def get_download_url(request: HttpRequest, document_id: int):
     """Get presigned download URL for a document.
@@ -226,6 +226,9 @@ def get_download_url(request: HttpRequest, document_id: int):
         document = Document.objects.get(pk=document_id)
     except Document.DoesNotExist:
         return 404, {"message": "Document not found."}
+
+    if not document.s3_key.startswith(f"{connection.schema_name}/"):
+        return 403, {"message": "Access denied."}
 
     url = generate_download_url(document.s3_key)
     cache.set(cache_key, url, 840)
@@ -274,18 +277,18 @@ def summarize_document(request: HttpRequest, document_id: int):
 
     document.summary = strip_tags(summary)
     document.save(update_fields=["summary"])
-    cache.set(cache_key, summary, 86400)
+    cache.set(cache_key, document.summary, 86400)
 
     AuditLog.objects.create(
         entity_type="document",
         entity_id=document.id,
         action="summarized",
-        details={"summary_length": len(summary)},
+        details={"summary_length": len(document.summary)},
         performed_by=request.user,
     )
 
     track_action(request, "summarized", "document", document.name, document.id)
-    return 200, {"id": document.id, "summary": summary}
+    return 200, {"id": document.id, "summary": document.summary}
 
 
 @document_router.delete(

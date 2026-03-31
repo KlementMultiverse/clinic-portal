@@ -1,4 +1,5 @@
 import logging
+import re
 
 from django.http import HttpRequest
 from ninja import Router
@@ -9,6 +10,8 @@ from tenant_users.tenants.tasks import provision_tenant
 
 from apps.tenants.models import Tenant
 from apps.users.api import MessageOut, TenantCreateIn, TenantOut
+
+RESERVED_SUBDOMAINS = {"admin", "api", "www", "public", "portal", "mail", "ftp"}
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +38,12 @@ def create_tenant(request: HttpRequest, data: TenantCreateIn):
     - 401 Unauthorized: not authenticated
     - 409 Conflict: subdomain already taken
     """
+    subdomain = data.subdomain
+    if not re.match(r"^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$", subdomain):
+        return 400, {"message": "Invalid subdomain format."}
+    if subdomain in RESERVED_SUBDOMAINS:
+        return 400, {"message": "This subdomain is reserved."}
+
     try:
         tenant, domain = provision_tenant(
             tenant_name=data.name,

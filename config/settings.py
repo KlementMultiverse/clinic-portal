@@ -6,11 +6,16 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-SECRET_KEY = os.environ.get(
-    "SECRET_KEY", "django-insecure-dev-key-change-in-production"
-)
-DEBUG = os.environ.get("DEBUG", "True").lower() == "true"
-ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "*").split(",")
+SECRET_KEY = os.environ.get("SECRET_KEY", "")
+if not SECRET_KEY:
+    if os.environ.get("DEBUG", "False").lower() != "true":
+        raise ValueError("SECRET_KEY must be set in production")
+    SECRET_KEY = "django-insecure-dev-only-key"
+
+DEBUG = os.environ.get("DEBUG", "False").lower() == "true"
+ALLOWED_HOSTS = os.environ.get(
+    "ALLOWED_HOSTS", "localhost,portal.localhost,clinic1.localhost,clinic2.localhost"
+).split(",")
 
 SHARED_APPS = [
     "django_tenants",

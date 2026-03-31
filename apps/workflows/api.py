@@ -477,6 +477,8 @@ def assign_task(request: HttpRequest, task_id: int, data: TaskAssignIn):
         user = User.objects.get(pk=data.user_id)
     except User.DoesNotExist:
         return 404, {"message": "User not found."}
+    if not request.tenant.user_set.filter(pk=data.user_id).exists():
+        return 404, {"message": "User not found in this tenant."}
     task.assigned_to = user
     task.save()
     logger.info("Task %d assigned to user=%s", task_id, user.email)

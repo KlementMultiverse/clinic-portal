@@ -1,6 +1,7 @@
 import logging
 from datetime import datetime
 
+from django.db.models import Count
 from django.http import HttpRequest
 from ninja import Router, Schema
 from ninja.security import django_auth
@@ -207,6 +208,8 @@ def chat_message(request: HttpRequest, data: ChatIn):
     msg = data.message.strip()
     if not msg or len(msg) < 2:
         return 400, {"message": "Message too short."}
+    if len(msg) > 2000:
+        return 400, {"message": "Message too long (max 2000 characters)."}
 
     logger.info(
         "Chat message: thread=%s user=%s msg='%s'",
@@ -238,12 +241,16 @@ def chat_message(request: HttpRequest, data: ChatIn):
 @search_router.get("/chat/threads", response=list[ChatThreadOut])
 def list_threads(request: HttpRequest):
     """List user's chat threads, most recent first."""
-    threads = ChatThread.objects.filter(user=request.user)[:20]
+    threads = (
+        ChatThread.objects.filter(user=request.user)
+        .annotate(msg_count=Count("messages"))
+        .order_by("-updated_at")[:20]
+    )
     return [
         {
             "id": t.id,
             "title": t.title or f"Chat {t.id}",
-            "message_count": t.messages.count(),
+            "message_count": t.msg_count,
             "created_at": t.created_at,
             "updated_at": t.updated_at,
         }

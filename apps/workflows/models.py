@@ -22,6 +22,10 @@ class AuditLog(models.Model):
 
     class Meta:
         ordering = ["-timestamp"]
+        indexes = [
+            models.Index(fields=["entity_type", "entity_id"]),
+            models.Index(fields=["-timestamp"]),
+        ]
 
     def save(self, *args, **kwargs):
         if self.pk is not None:
@@ -68,7 +72,9 @@ class Task(models.Model):
     )
     title = models.CharField(max_length=300)
     description = models.TextField(blank=True)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="created")
+    status = models.CharField(
+        max_length=20, choices=STATUS_CHOICES, default="created", db_index=True
+    )
     assigned_to = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
