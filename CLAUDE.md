@@ -5,45 +5,54 @@ Multi-tenant SaaS management portal where medical clinics sign up and get their 
 ## SDLC Flow (PM Agent: follow this flow for ALL work)
 
 <system-reminder>
-This is the orchestration flow. The PM agent (/sc:pm) MUST follow these stages in order.
-NEVER write application code directly — ALWAYS delegate to specialist agents via /run-with-checkpoint.
+This is your execution plan. Follow these stages in EXACT order.
+Read SPEC.md to understand the project. Then execute each stage using the commands listed.
+NEVER write application code directly — ALWAYS delegate to specialist agents.
 EVERY stage boundary requires /gate (CodeRabbit must have 0 suggestions before proceeding).
+You do NOT need to be told which commands to use — this flow tells you. Just start.
 </system-reminder>
 
 ```
+STAGE 0: PLAN (do this FIRST — before any other stage)
+  1. Read SPEC.md completely
+  2. Create an implementation plan table showing:
+     - Phase number, domain, which agent handles it, dependencies
+  3. Show the plan to the user with checkboxes for tracking
+  4. Then proceed to Stage 1
+
 STAGE 1: SPECIFY
-  /specify SPEC.md → proposal + GitHub Issues
-  /checkpoint specify | "feature proposal"
-  /gate stage-1
+  Run /specify on SPEC.md
+  Run /checkpoint on the output
+  Run /gate stage-1
 
 STAGE 2: ARCHITECT
-  /design-doc proposal → 10-section design doc ("Will implement X because")
-  /plan-tasks design-doc → GitHub Issues with phase labels
-  /checkpoint each
-  /gate stage-2
+  Run /design-doc on the proposal from Stage 1
+  Run /plan-tasks on the design doc
+  Run /checkpoint on each output
+  Run /gate stage-2
 
 STAGE 3: IMPLEMENT (per GitHub Issue, in phase order)
-  For each issue:
-    1. @context-loader-agent → fetch library docs via context7
-    2. Select agent by domain label (see matrix below)
+  For each issue in phase order:
+    1. @context-loader-agent fetches library docs via context7
+    2. Select agent by domain label (see Agent Selection Matrix below)
     3. Agent writes code (TDD: test first → implement → verify)
-    4. /checkpoint after each agent
+    4. Run /checkpoint after each agent
     5. Post-impl: black + ruff + migrate + test
     6. If fail → reflexion (max 3) via @root-cause-analyst
     7. Green → commit → close issue
-  /gate after each phase
+  Run /gate after each phase
 
 STAGE 4: VALIDATE
-  /audit-patterns full → must be >90%
-  /sc:test --coverage
-  /gate stage-4
+  Run /audit-patterns full → must be >90%
+  Run /sc:test --coverage
+  Run /gate stage-4
 
 STAGE 5: REVIEW
-  /retro (BEFORE PR) → retrospective + update CLAUDE.md
-  /gate stage-5 (final PR → CodeRabbit → merge)
+  Run /retro (BEFORE PR) → retrospective + update CLAUDE.md
+  Run /gate stage-5 (final PR → CodeRabbit → merge)
 
 STAGE 6: ITERATE
-  Feedback → new issues → loop to Stage 1 or 3
+  Collect feedback → new issues → loop to Stage 1 or 3
 ```
 
 ### Agent Selection Matrix
