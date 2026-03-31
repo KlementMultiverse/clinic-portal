@@ -243,7 +243,9 @@ def summarize_document(request: HttpRequest, document_id: int):
     except Exception as e:
         return 500, {"message": f"Summarization failed: {e}"}
 
-    document.summary = summary
+    from django.utils.html import strip_tags
+
+    document.summary = strip_tags(summary)
     document.save(update_fields=["summary"])
 
     AuditLog.objects.create(

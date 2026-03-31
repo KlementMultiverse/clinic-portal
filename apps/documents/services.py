@@ -73,20 +73,43 @@ def invoke_summarize_lambda(text):
     Per CLAUDE.md Rule #8: Lambda invocation via boto3 -- NEVER call OpenAI directly.
     Per CLAUDE.md Rule #9: credentials from os.environ.
     """
-    lambda_client = boto3.client(
-        "lambda",
-        region_name=settings.AWS_S3_REGION_NAME,
-        aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
-        aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
-    )
-    response = lambda_client.invoke(
-        FunctionName=settings.LAMBDA_SUMMARIZE_ARN,
-        InvocationType="RequestResponse",
-        Payload=json.dumps({"text": text, "task_type": "summarize_document"}),
-    )
+    lambda_arn = settings.LAMBDA_SUMMARIZE_ARN
+    if not lambda_arn:
+        raise RuntimeError("LAMBDA_SUMMARIZE_ARN not configured")
+
+    try:
+        lambda_client = boto3.client(
+            "lambda",
+            region_name=settings.AWS_S3_REGION_NAME,
+            aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
+            aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
+        )
+        response = lambda_client.invoke(
+            FunctionName=lambda_arn,
+            InvocationType="RequestResponse",
+            Payload=json.dumps({"text": text, "task_type": "summarize_document"}),
+        )
+    except botocore.exceptions.ClientError as exc:
+        logger.error("Lambda ClientError during summarize: %s", exc)
+        raise RuntimeError(f"Summarization service error: {exc}") from exc
+    except (
+        botocore.exceptions.ReadTimeoutError,
+        botocore.exceptions.ConnectTimeoutError,
+    ) as exc:
+        logger.error("Lambda timeout during summarize: %s", exc)
+        raise RuntimeError("Summarization service unavailable (timeout)") from exc
+    except (
+        botocore.exceptions.NoCredentialsError,
+        botocore.exceptions.PartialCredentialsError,
+    ) as exc:
+        logger.error("AWS credentials error during summarize: %s", exc)
+        raise RuntimeError("Summarization service unavailable (credentials)") from exc
+
     result = json.loads(response["Payload"].read())
     if "FunctionError" in response:
         raise RuntimeError(f"Lambda error: {result}")
+    if "error" in result:
+        raise RuntimeError(f"Lambda returned error: {result['error']}")
     return result.get("summary", "")
 
 

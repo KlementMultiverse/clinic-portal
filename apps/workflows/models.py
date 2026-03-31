@@ -19,6 +19,14 @@ class AuditLog(models.Model):
     class Meta:
         ordering = ["-timestamp"]
 
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValueError("AuditLog entries are immutable and cannot be updated.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValueError("AuditLog entries are immutable and cannot be deleted.")
+
     def __str__(self):
         return f"{self.entity_type}:{self.entity_id} - {self.action}"
 

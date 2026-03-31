@@ -15,7 +15,7 @@ from apps.users.models import User
 # NinjaAPI instance — Per CLAUDE.md Rule #1, using Django Ninja for all API
 # routes. CSRF enabled for session-based authentication.
 # ---------------------------------------------------------------------------
-api = NinjaAPI(urls_namespace="api")
+api = NinjaAPI(urls_namespace="api")  # CSRF enforced via django_auth (SessionAuth.csrf=True)
 
 
 # ---------------------------------------------------------------------------
