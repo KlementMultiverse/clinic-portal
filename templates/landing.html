@@ -59,6 +59,12 @@
 
 {% block extra_js %}
 <script>
+// Auto-populate subdomain from clinic name
+document.getElementById('clinic-name').addEventListener('input', function() {
+    const slug = this.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').substring(0, 30);
+    document.getElementById('subdomain').value = slug;
+    document.getElementById('subdomain-preview').textContent = slug || 'myclinic';
+});
 document.getElementById('subdomain').addEventListener('input', function() {
     document.getElementById('subdomain-preview').textContent = this.value || 'myclinic';
 });
@@ -70,15 +76,26 @@ document.getElementById('signup-form').addEventListener('submit', async function
     const clinicName = document.getElementById('clinic-name').value;
     const subdomain = document.getElementById('subdomain').value;
 
-    // Step 1: Register user
+    const btn = this.querySelector('button[type="submit"]');
+    btn.setAttribute('aria-busy', 'true');
+    btn.textContent = 'Creating workspace...';
+    btn.disabled = true;
+
+    // Step 1: Register user (or login if already exists)
     let resp = await apiFetch('/api/auth/register', {
         method: 'POST',
         body: JSON.stringify({ email: email, password: password, name: clinicName }),
     });
     if (!resp.ok) {
         const err = await resp.json();
-        showAlert(err.message || 'Registration failed.', 'error');
-        return;
+        // If user exists, try to just login
+        if (resp.status !== 409) {
+            showAlert(err.message || 'Registration failed.', 'error');
+            btn.setAttribute('aria-busy', 'false');
+            btn.textContent = 'Create Workspace';
+            btn.disabled = false;
+            return;
+        }
     }
 
     // Step 2: Login
@@ -88,7 +105,10 @@ document.getElementById('signup-form').addEventListener('submit', async function
     });
     if (!resp.ok) {
         const err = await resp.json();
-        showAlert(err.message || 'Login failed.', 'error');
+        showAlert(err.message || 'Login failed. Check your password.', 'error');
+        btn.setAttribute('aria-busy', 'false');
+        btn.textContent = 'Create Workspace';
+        btn.disabled = false;
         return;
     }
 
@@ -100,12 +120,16 @@ document.getElementById('signup-form').addEventListener('submit', async function
     if (!resp.ok) {
         const err = await resp.json();
         showAlert(err.message || 'Workspace creation failed.', 'error');
+        btn.setAttribute('aria-busy', 'false');
+        btn.textContent = 'Create Workspace';
+        btn.disabled = false;
         return;
     }
 
-    showAlert('Workspace created! Redirecting...', 'success');
+    showAlert('Workspace created! Redirecting to ' + clinicName + '...', 'success');
+    const port = window.location.port ? ':' + window.location.port : '';
     setTimeout(function() {
-        window.location.href = '//' + subdomain + '.' + window.location.hostname + '/';
+        window.location.href = '//' + subdomain + '.localhost' + port + '/';
     }, 1500);
 });
 </script>
