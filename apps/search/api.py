@@ -13,6 +13,9 @@ logger = logging.getLogger(__name__)
 
 search_router = Router(auth=django_auth)
 
+MAX_QUERY_LENGTH = 500
+MAX_HISTORY = 20
+
 
 class SearchIn(Schema):
     query: str
@@ -55,27 +58,36 @@ class MessageOut(Schema):
 
 @search_router.post("/", response={200: SearchOut, 400: MessageOut})
 def search(request: HttpRequest, data: SearchIn):
-    """Search clinicaltrials.gov + PubMed, summarize with AI, save to history.
-
-    Error responses:
-    - 400 Bad Request: query too short
-    - 401 Unauthorized: not authenticated
-    - 422 Unprocessable Entity: schema validation failure (automatic)
-    """
+    """Search clinicaltrials.gov + PubMed, summarize with AI, save to history."""
     query = data.query.strip()
+
+    # Validation
     if not query or len(query) < 3:
         return 400, {"message": "Query must be at least 3 characters."}
+    if len(query) > MAX_QUERY_LENGTH:
+        query = query[:MAX_QUERY_LENGTH]
 
     logger.info(
-        "Clinical search: query='%s' by user=%s", query[:50], request.user.email
+        "Clinical search: query='%s' by user=%s",
+        query[:50],
+        request.user.email,
     )
 
     # Fetch from both APIs in parallel
-    trials, papers = run_search(query)
+    try:
+        trials, papers = run_search(query)
+    except Exception as exc:
+        logger.error("Search failed: %s", exc, exc_info=True)
+        trials, papers = [], []
+
     logger.info("Search results: %d trials, %d papers", len(trials), len(papers))
 
     # Summarize with AI
-    summary = summarize_search_results(query, trials, papers)
+    try:
+        summary = summarize_search_results(query, trials, papers)
+    except Exception as exc:
+        logger.error("Summarization failed: %s", exc, exc_info=True)
+        summary = "AI summary unavailable — see results below."
 
     # Save to history
     record = SearchHistory.objects.create(
@@ -86,16 +98,18 @@ def search(request: HttpRequest, data: SearchIn):
         papers_data=papers,
     )
 
-    # Per CLAUDE.md Rule #12: AuditLog tracks every state mutation
     AuditLog.objects.create(
         entity_type="search",
         entity_id=record.id,
         action="searched",
-        details={"query": query, "trials": len(trials), "papers": len(papers)},
+        details={
+            "query": query[:100],
+            "trials": len(trials),
+            "papers": len(papers),
+        },
         performed_by=request.user,
     )
 
-    # Track in session memory
     try:
         from apps.users.services import track_action
 
@@ -113,18 +127,14 @@ def search(request: HttpRequest, data: SearchIn):
 
 @search_router.get("/history", response=list[SearchHistoryOut])
 def search_history(request: HttpRequest):
-    """List user's past searches, most recent first.
-
-    Error responses:
-    - 401 Unauthorized: not authenticated
-    """
-    logger.info("Search history requested by user=%s", request.user.email)
-    records = SearchHistory.objects.filter(user=request.user)[:20]
+    """List user's past searches, most recent first."""
+    logger.info("Search history: user=%s", request.user.email)
+    records = SearchHistory.objects.filter(user=request.user)[:MAX_HISTORY]
     return [
         {
             "id": r.id,
             "query": r.query,
-            "summary": r.summary,
+            "summary": r.summary[:500] if r.summary else "",
             "trials_count": len(r.trials_data) if r.trials_data else 0,
             "papers_count": len(r.papers_data) if r.papers_data else 0,
             "created_at": r.created_at,
