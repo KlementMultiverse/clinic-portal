@@ -125,7 +125,11 @@ async function loadDocuments() {
 
         html += '<div class="task-actions">';
         html += '<button class="outline download-btn" data-doc-id="' + doc.id + '">Download</button> ';
-        html += '<button class="outline secondary summarize-btn" data-doc-id="' + doc.id + '">Summarize</button>';
+        if (doc.summary) {
+            html += '<button class="outline summarize-btn" data-doc-id="' + doc.id + '">View Summary</button>';
+        } else {
+            html += '<button class="outline secondary summarize-btn" data-doc-id="' + doc.id + '">Summarize with AI</button>';
+        }
         html += '</div>';
 
         article.innerHTML = html;
@@ -151,6 +155,7 @@ async function loadDocuments() {
         btn.addEventListener('click', async function() {
             const docId = this.dataset.docId;
             this.setAttribute('aria-busy', 'true');
+            this.textContent = 'Processing...';
             this.disabled = true;
             const resp = await apiFetch('/api/documents/' + docId + '/summarize', {
                 method: 'POST',
@@ -158,11 +163,23 @@ async function loadDocuments() {
             this.setAttribute('aria-busy', 'false');
             this.disabled = false;
             if (resp.ok) {
-                showAlert('Document summarized.', 'success');
-                loadDocuments();
+                const data = await resp.json();
+                // Show summary inline
+                const article = this.closest('article');
+                let details = article.querySelector('details');
+                if (!details) {
+                    details = document.createElement('details');
+                    details.open = true;
+                    article.querySelector('.task-actions').before(details);
+                }
+                details.innerHTML = '<summary>AI Summary</summary><p>' + escapeHtml(data.summary) + '</p>';
+                details.open = true;
+                this.textContent = 'View Summary';
+                this.classList.remove('secondary');
             } else {
                 const err = await resp.json();
                 showAlert(err.message || 'Summarization failed.', 'error');
+                this.textContent = 'Summarize with AI';
             }
         });
     });

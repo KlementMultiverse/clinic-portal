@@ -24,12 +24,15 @@ logger = logging.getLogger(__name__)
 
 
 def _read_document_text(document):
-    """Read document content from S3 for summarization.
+    """Read document content from S3 and extract text using Claude.
 
-    Downloads the file from S3 and extracts text.
-    For PDFs/docs, returns the raw bytes decoded as text.
-    Falls back to metadata-only description if download fails.
+    For text/csv: direct decode.
+    For PDF/Word/images: send raw bytes description + ask Claude to
+    extract (Claude can read base64-encoded content descriptions).
+    Falls back to metadata if S3 download fails.
     """
+    import base64
+
     try:
         from apps.documents.services import get_s3_client
 
@@ -41,25 +44,34 @@ def _read_document_text(document):
             Key=document.s3_key,
         )
         raw = resp["Body"].read()
-        # Try to extract text based on content type
-        if document.content_type == "text/plain":
+
+        # Text files — direct read
+        if document.content_type in ("text/plain", "text/csv"):
             return raw.decode("utf-8", errors="replace")[:10000]
-        # For PDFs — try to decode readable text portions
+
+        # PDF / Word — extract printable text first
         try:
             text = raw.decode("utf-8", errors="replace")
-            # Filter to printable characters
             clean = "".join(c for c in text if c.isprintable() or c in "\n\r\t")
-            if len(clean.strip()) > 50:
-                return f"Document: {document.name}\n" f"Content:\n{clean[:10000]}"
+            if len(clean.strip()) > 100:
+                return (
+                    f"Document: {document.name}\n" f"Extracted text:\n{clean[:10000]}"
+                )
         except Exception:
             pass
-        # Fallback — describe the document
+
+        # Binary/PDF — use Claude to describe content from base64
+        # Send first 50KB to keep prompt small
+        b64_chunk = base64.b64encode(raw[:50000]).decode("ascii")
         return (
             f"Document: {document.name}\n"
             f"Type: {document.content_type}\n"
             f"Size: {document.size_bytes} bytes\n"
-            f"(Binary file — summarize based on filename and type)"
+            f"Base64 content (first 50KB):\n{b64_chunk[:5000]}\n\n"
+            f"Please extract and summarize the readable text from "
+            f"this {document.content_type} document."
         )
+
     except Exception as exc:
         logger.warning("Could not read document from S3: %s", exc)
         return (
@@ -302,6 +314,11 @@ def summarize_document(request: HttpRequest, document_id: int):
     except Document.DoesNotExist:
         return 404, {"message": "Document not found."}
 
+    # If already summarized, return existing summary (no LLM call)
+    if document.summary:
+        return 200, {"id": document.id, "summary": document.summary}
+
+    # Check Redis cache
     cache_key = f"llm:summary:{document_id}"
     cached = cache.get(cache_key)
     if cached:
