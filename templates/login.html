@@ -37,7 +37,23 @@ document.getElementById('login-form').addEventListener('submit', async function(
     });
 
     if (resp.ok) {
-        window.location.href = '/';
+        const data = await resp.json();
+        // If on a clinic subdomain, go to dashboard
+        if (data.tenant) {
+            window.location.href = '/';
+            return;
+        }
+        // On portal — redirect to user's first clinic
+        if (data.clinics && data.clinics.length > 0) {
+            const clinic = data.clinics[0];
+            showAlert('Welcome! Redirecting to ' + clinic.name + '...', 'success');
+            setTimeout(function() {
+                window.location.href = '//' + clinic.domain + ':' + window.location.port + '/';
+            }, 1000);
+        } else {
+            showAlert('Login successful! Create a clinic workspace on the home page.', 'success');
+            setTimeout(function() { window.location.href = '/'; }, 1500);
+        }
     } else {
         const err = await resp.json();
         showAlert(err.message || 'Login failed.', 'error');

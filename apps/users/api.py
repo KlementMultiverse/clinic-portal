@@ -46,12 +46,18 @@ class UserOut(Schema):
     role: str
 
 
+class ClinicOut(Schema):
+    name: str
+    domain: str
+
+
 class UserWithTenantOut(Schema):
     id: int
     email: str
     name: str
     role: str
     tenant: Optional[str] = None
+    clinics: list[ClinicOut] = []
 
 
 class TenantCreateIn(Schema):
@@ -137,12 +143,26 @@ def login_view(request: HttpRequest, data: LoginIn):
     tenant_name = None
     if hasattr(request, "tenant") and request.tenant.schema_name != "public":
         tenant_name = request.tenant.name
+
+    # Get user's clinic domains for portal redirect
+    clinics = []
+    try:
+        from apps.tenants.models import Domain
+
+        for t in user.tenants.exclude(schema_name="public"):
+            domain = Domain.objects.filter(tenant=t, is_primary=True).first()
+            if domain:
+                clinics.append({"name": t.name, "domain": domain.domain})
+    except Exception:
+        pass
+
     return 200, {
         "id": user.id,
         "email": user.email,
         "name": user.name,
         "role": user.role,
         "tenant": tenant_name,
+        "clinics": clinics,
     }
 
 
