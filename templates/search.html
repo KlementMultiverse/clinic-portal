@@ -9,12 +9,7 @@
     <input type="text" id="search-input"
            placeholder="Search clinical trials and papers... (e.g. SGLT2 inhibitors, metformin diabetes)"
            style="width:100%; margin-bottom:.5rem;" required>
-    <div style="display:flex; gap:.5rem; align-items:center;">
-        <button type="button" id="search-btn" style="width:auto; padding:.5rem 2rem;">Search</button>
-        <label style="display:flex; align-items:center; gap:.3rem; font-size:.85rem;">
-            <input type="checkbox" id="fresh-check" style="width:auto; margin:0;"> Fresh results
-        </label>
-    </div>
+    <button type="button" id="search-btn" style="width:auto; padding:.5rem 2rem;">Search</button>
 </div>
 
 <!-- AI Summary -->
@@ -162,7 +157,6 @@ document.getElementById('search-input').addEventListener('keydown', function(e) 
 document.getElementById('search-btn').addEventListener('click', async function() {
     var query = document.getElementById('search-input').value.trim();
     if (!query) return;
-    var fresh = document.getElementById('fresh-check').checked;
 
     var btn = document.getElementById('search-btn');
     btn.setAttribute('aria-busy', 'true');
@@ -174,7 +168,7 @@ document.getElementById('search-btn').addEventListener('click', async function()
     try {
         var resp = await apiFetch('/api/search/', {
             method: 'POST',
-            body: JSON.stringify({ query: query, fresh: fresh }),
+            body: JSON.stringify({ query: query }),
         });
         var data = await resp.json();
         if (resp.ok) {
@@ -222,7 +216,10 @@ async function loadHistory() {
     var html = '<table role="grid"><thead><tr><th>Query</th><th>Trials</th><th>Papers</th><th>Date</th></tr></thead><tbody>';
     for (var i = 0; i < data.length; i++) {
         var s = data[i];
-        html += '<tr><td>' + escapeHtml(s.query.substring(0, 60)) + '</td><td>' + s.trials_count + '</td><td>' + s.papers_count + '</td><td>' + new Date(s.created_at).toLocaleDateString() + '</td></tr>';
+        html += '<tr style="cursor:pointer;" onclick="document.getElementById(\'search-input\').value=\'' + escapeHtml(s.query.replace(/'/g, "\\'")) + '\';document.getElementById(\'search-btn\').click();">';
+        html += '<td><a href="#">' + escapeHtml(s.query.substring(0, 60)) + '</a></td>';
+        html += '<td>' + s.trials_count + '</td><td>' + s.papers_count + '</td>';
+        html += '<td>' + new Date(s.created_at).toLocaleDateString() + '</td></tr>';
     }
     html += '</tbody></table>';
     container.innerHTML = html;
