@@ -14,8 +14,6 @@ from apps.documents.services import (
     delete_s3_object,
     generate_download_url,
     generate_upload_url,
-    get_user_context,
-    invoke_summarize_lambda,
 )
 from apps.users.services import track_action
 from apps.workflows.models import AuditLog
@@ -23,79 +21,137 @@ from apps.workflows.models import AuditLog
 logger = logging.getLogger(__name__)
 
 
-def _read_document_text(document):
-    """Read document content from S3 and extract text using Claude.
+def _summarize_with_claude(document):
+    """Send document directly to Claude for summarization.
 
-    For text/csv: direct decode.
-    For PDF/Word/images: send raw bytes description + ask Claude to
-    extract (Claude can read base64-encoded content descriptions).
-    Falls back to metadata if S3 download fails.
+    Claude Haiku 4.5 natively reads PDFs, images, and text.
+    We send the raw file as base64 content block.
     """
     import base64
+    import json
+    import os
+    import urllib.request
 
     try:
+        from django.conf import settings
+
         from apps.documents.services import get_s3_client
 
         s3 = get_s3_client()
-        from django.conf import settings
-
         resp = s3.get_object(
             Bucket=settings.AWS_STORAGE_BUCKET_NAME,
             Key=document.s3_key,
         )
         raw = resp["Body"].read()
-
-        # Text files — direct read
-        if document.content_type in ("text/plain", "text/csv"):
-            return raw.decode("utf-8", errors="replace")[:10000]
-
-        # PDF / Word — extract printable text first
-        try:
-            text = raw.decode("utf-8", errors="replace")
-            clean = "".join(c for c in text if c.isprintable() or c in "\n\r\t")
-            if len(clean.strip()) > 100:
-                return (
-                    f"Document: {document.name}\n" f"Extracted text:\n{clean[:10000]}"
-                )
-        except Exception:
-            pass
-
-        # Binary/PDF — use Claude to describe content from base64
-        # Send first 50KB to keep prompt small
-        b64_chunk = base64.b64encode(raw[:50000]).decode("ascii")
-        return (
-            f"Document: {document.name}\n"
-            f"Type: {document.content_type}\n"
-            f"Size: {document.size_bytes} bytes\n"
-            f"Base64 content (first 50KB):\n{b64_chunk[:5000]}\n\n"
-            f"Please extract and summarize the readable text from "
-            f"this {document.content_type} document."
-        )
-
     except Exception as exc:
         logger.warning("Could not read document from S3: %s", exc)
-        return (
-            f"Document: {document.name}\n"
-            f"Type: {document.content_type}\n"
-            f"Size: {document.size_bytes} bytes"
+        return None
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return None
+
+    # Map content types to Claude's accepted media types
+    claude_media_types = {
+        "application/pdf": "application/pdf",
+        "image/png": "image/png",
+        "image/jpeg": "image/jpeg",
+        "image/gif": "image/gif",
+        "image/webp": "image/webp",
+    }
+
+    content_blocks = []
+    media_type = claude_media_types.get(document.content_type)
+
+    if media_type:
+        # Send as document/image block — Claude reads it directly
+        b64_data = base64.standard_b64encode(raw).decode("ascii")
+        if media_type == "application/pdf":
+            content_blocks.append(
+                {
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": b64_data,
+                    },
+                }
+            )
+        else:
+            content_blocks.append(
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": b64_data,
+                    },
+                }
+            )
+    else:
+        # Text-based files — send as text
+        text = raw.decode("utf-8", errors="replace")[:10000]
+        content_blocks.append(
+            {
+                "type": "text",
+                "text": f"Document: {document.name}\n\n{text}",
+            }
         )
+
+    content_blocks.append(
+        {
+            "type": "text",
+            "text": (
+                "Summarize this document for a medical clinic staff member. "
+                "Keep the summary under 200 words. Use plain language. "
+                "Structure: 1-2 sentence overview, then key points as bullets."
+            ),
+        }
+    )
+
+    model = os.environ.get("LLM_MODEL", "claude-haiku-4-5-20251001")
+    payload = {
+        "model": model,
+        "max_tokens": 500,
+        "temperature": 0.2,
+        "messages": [{"role": "user", "content": content_blocks}],
+    }
+
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+            from django.utils.html import strip_tags
+
+            return strip_tags(body["content"][0]["text"]).strip()
+    except Exception as exc:
+        logger.error("Claude summarization failed: %s", exc)
+        return None
 
 
 # ---------------------------------------------------------------------------
 # Schemas -- Per CLAUDE.md Rule #1, using Django Ninja Schema (Pydantic)
 # ---------------------------------------------------------------------------
 
+# Supported formats — Claude Haiku 4.5 reads PDFs and images natively
 ALLOWED_CONTENT_TYPES = {
-    "application/pdf",
-    "application/msword",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/vnd.ms-excel",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "text/plain",
-    "text/csv",
-    "image/png",
-    "image/jpeg",
-    "image/gif",
+    "application/pdf",  # Claude reads directly
+    "text/plain",  # Sent as text block
+    "text/csv",  # Sent as text block
+    "application/msword",  # .doc — text extraction
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # .docx
+    "image/png",  # Claude reads directly
+    "image/jpeg",  # Claude reads directly
+    "image/gif",  # Claude reads directly
 }
 
 
@@ -328,13 +384,11 @@ def summarize_document(request: HttpRequest, document_id: int):
 
     logger.info("Document summarize: id=%d", document_id)
     try:
-        # Fetch document content from S3 for summarization
-        doc_text = _read_document_text(document)
-        user_context = get_user_context(request.user)
-        summary = invoke_summarize_lambda(
-            doc_text,
-            user_context=user_context,
-        )
+        # Send document directly to Claude (reads PDFs, images natively)
+        summary = _summarize_with_claude(document)
+        if not summary:
+            # Fallback to text extraction path
+            summary = "Could not summarize this document."
     except Exception as e:
         logger.error("Document operation failed: %s", str(e), exc_info=True)
         return 500, {"message": f"Summarization failed: {e}"}
