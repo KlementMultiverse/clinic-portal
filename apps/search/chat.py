@@ -156,10 +156,10 @@ def chat(user, message, thread_id=None):
     # Save user message
     ChatMessage.objects.create(thread=thread, role="user", content=message)
 
-    # Set title from first message
+    # Set title + always bump updated_at so thread moves to top
     if not thread.title:
         thread.title = message[:100]
-        thread.save(update_fields=["title"])
+    thread.save(update_fields=["title", "updated_at"])
 
     has_context = bool(thread.trials_context or thread.papers_context)
 
