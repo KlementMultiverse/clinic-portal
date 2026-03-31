@@ -45,3 +45,9 @@ def staff(request):
 def search_view(request):
     """Clinical QA search page (auth required)."""
     return render(request, "search.html")
+
+
+@login_required
+def chat_view(request):
+    """Clinical QA chat page (auth required)."""
+    return render(request, "chat.html")

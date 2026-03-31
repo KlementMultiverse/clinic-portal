@@ -3,6 +3,7 @@ from django.urls import path
 
 from apps.users.api import api
 from config.views import (
+    chat_view,
     dashboard,
     documents,
     login_view,
@@ -22,4 +23,5 @@ urlpatterns = [
     path("documents/", documents, name="documents"),
     path("staff/", staff, name="staff"),
     path("search/", search_view, name="search"),
+    path("chat/", chat_view, name="chat"),
 ]

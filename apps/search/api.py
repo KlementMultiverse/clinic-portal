@@ -5,7 +5,8 @@ from django.http import HttpRequest
 from ninja import Router, Schema
 from ninja.security import django_auth
 
-from apps.search.models import SearchHistory
+from apps.search.chat import chat as chat_service
+from apps.search.models import ChatThread, SearchHistory
 from apps.search.services import rewrite_query, run_search, summarize_search_results
 from apps.workflows.models import AuditLog
 
@@ -159,4 +160,111 @@ def search_history(request: HttpRequest):
             "created_at": r.created_at,
         }
         for r in records
+    ]
+
+
+# ─────────────────────────────────────────────
+# Chat endpoints — conversational clinical QA
+# ─────────────────────────────────────────────
+
+
+class ChatIn(Schema):
+    message: str
+    thread_id: int = None  # None = new conversation
+
+
+class ChatMessageOut(Schema):
+    role: str
+    content: str
+    created_at: datetime
+
+
+class ChatOut(Schema):
+    thread_id: int
+    title: str
+    message: str
+    has_context: bool
+    trials_count: int
+    papers_count: int
+
+
+class ChatThreadOut(Schema):
+    id: int
+    title: str
+    message_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+@search_router.post("/chat", response={200: ChatOut, 400: MessageOut})
+def chat_message(request: HttpRequest, data: ChatIn):
+    """Send a message in a clinical QA chat thread.
+
+    If thread_id is None, starts a new conversation.
+    The AI automatically searches clinicaltrials.gov + PubMed
+    when needed and remembers the conversation context.
+    """
+    msg = data.message.strip()
+    if not msg or len(msg) < 2:
+        return 400, {"message": "Message too short."}
+
+    logger.info(
+        "Chat message: thread=%s user=%s msg='%s'",
+        data.thread_id,
+        request.user.email,
+        msg[:50],
+    )
+
+    try:
+        result = chat_service(
+            user=request.user,
+            message=msg,
+            thread_id=data.thread_id,
+        )
+    except Exception as exc:
+        logger.error("Chat failed: %s", exc, exc_info=True)
+        return 400, {"message": "Chat error — try again."}
+
+    try:
+        from apps.users.services import track_action
+
+        track_action(request, "chatted", "clinical_chat", msg[:50], result["thread_id"])
+    except Exception:
+        pass
+
+    return 200, result
+
+
+@search_router.get("/chat/threads", response=list[ChatThreadOut])
+def list_threads(request: HttpRequest):
+    """List user's chat threads, most recent first."""
+    threads = ChatThread.objects.filter(user=request.user)[:20]
+    return [
+        {
+            "id": t.id,
+            "title": t.title or f"Chat {t.id}",
+            "message_count": t.messages.count(),
+            "created_at": t.created_at,
+            "updated_at": t.updated_at,
+        }
+        for t in threads
+    ]
+
+
+@search_router.get(
+    "/chat/{thread_id}", response={200: list[ChatMessageOut], 404: MessageOut}
+)
+def get_thread_messages(request: HttpRequest, thread_id: int):
+    """Get all messages in a chat thread."""
+    try:
+        thread = ChatThread.objects.get(id=thread_id, user=request.user)
+    except ChatThread.DoesNotExist:
+        return 404, {"message": "Thread not found."}
+    return 200, [
+        {
+            "role": m.role,
+            "content": m.content,
+            "created_at": m.created_at,
+        }
+        for m in thread.messages.all()
     ]

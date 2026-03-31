@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block title %}Clinical Chat — {{ request.tenant.name }}{% endblock %}
+
+{% block content %}
+<h2>Clinical QA Chat</h2>
+<p>Ask clinical questions — the AI searches real medical databases and cites sources.</p>
+
+<div style="display: flex; gap: 1rem;">
+    <!-- Thread sidebar -->
+    <aside style="width: 220px; min-width: 180px;">
+        <button id="new-chat-btn" class="outline" style="width:100%; margin-bottom:.5rem;">+ New Chat</button>
+        <div id="thread-list" style="max-height: 60vh; overflow-y: auto;">
+            <p><small>Loading threads...</small></p>
+        </div>
+    </aside>
+
+    <!-- Chat area -->
+    <div style="flex: 1;">
+        <div id="chat-messages" style="min-height: 300px; max-height: 60vh; overflow-y: auto; border: 1px solid var(--pico-muted-border-color); border-radius: 8px; padding: 1rem; margin-bottom: 1rem; background: var(--pico-background-color);">
+            <p style="color: var(--pico-muted-color); text-align: center;">Start a conversation by asking a clinical question.</p>
+        </div>
+
+        <form id="chat-form" style="display: flex; gap: .5rem;">
+            <input type="text" id="chat-input" placeholder="Ask about trials, drugs, conditions..."
+                   style="flex: 1;" autocomplete="off" required>
+            <button type="submit" id="send-btn">Send</button>
+        </form>
+        <small id="chat-status" style="color: var(--pico-muted-color);"></small>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let currentThreadId = null;
+
+function renderMessage(role, content) {
+    const div = document.createElement('div');
+    div.style.cssText = role === 'user'
+        ? 'text-align: right; margin: .5rem 0;'
+        : 'text-align: left; margin: .5rem 0;';
+    const bubble = document.createElement('div');
+    bubble.style.cssText = role === 'user'
+        ? 'display: inline-block; background: var(--pico-primary-background); color: var(--pico-primary-inverse); padding: .5rem 1rem; border-radius: 12px; max-width: 80%; text-align: left;'
+        : 'display: inline-block; background: var(--pico-secondary-background); padding: .5rem 1rem; border-radius: 12px; max-width: 80%; text-align: left;';
+    // Convert [NCT...] and [PMID:...] to links
+    let html = escapeHtml(content);
+    html = html.replace(/\[NCT(\d+)\]/g, '<a href="https://clinicaltrials.gov/study/NCT$1" target="_blank">[NCT$1]</a>');
+    html = html.replace(/\[PMID:\s*(\d+)\]/g, '<a href="https://pubmed.ncbi.nlm.nih.gov/$1/" target="_blank">[PMID: $1]</a>');
+    html = html.replace(/\n/g, '<br>');
+    bubble.innerHTML = html;
+    div.appendChild(bubble);
+    return div;
+}
+
+async function sendMessage(e) {
+    e.preventDefault();
+    const input = document.getElementById('chat-input');
+    const msg = input.value.trim();
+    if (!msg) return;
+
+    const container = document.getElementById('chat-messages');
+    // Clear placeholder
+    if (!currentThreadId && container.querySelector('p')) {
+        container.innerHTML = '';
+    }
+
+    // Show user message
+    container.appendChild(renderMessage('user', msg));
+    input.value = '';
+    input.disabled = true;
+    document.getElementById('send-btn').disabled = true;
+    document.getElementById('chat-status').textContent = 'Searching databases & thinking...';
+
+    // Scroll to bottom
+    container.scrollTop = container.scrollHeight;
+
+    try {
+        const resp = await apiFetch('/api/search/chat', {
+            method: 'POST',
+            body: JSON.stringify({
+                message: msg,
+                thread_id: currentThreadId
+            })
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+            currentThreadId = data.thread_id;
+            container.appendChild(renderMessage('assistant', data.message));
+            document.getElementById('chat-status').textContent =
+                `${data.trials_count} trials, ${data.papers_count} papers loaded`;
+            loadThreads();
+        } else {
+            container.appendChild(renderMessage('assistant', data.message || 'Error'));
+        }
+    } catch (err) {
+        container.appendChild(renderMessage('assistant', 'Network error — try again.'));
+    }
+
+    input.disabled = false;
+    document.getElementById('send-btn').disabled = false;
+    input.focus();
+    container.scrollTop = container.scrollHeight;
+}
+
+async function loadThreads() {
+    try {
+        const resp = await apiFetch('/api/search/chat/threads');
+        const threads = await resp.json();
+        const list = document.getElementById('thread-list');
+        if (!threads.length) {
+            list.innerHTML = '<small style="color:var(--pico-muted-color)">No conversations yet</small>';
+            return;
+        }
+        list.innerHTML = threads.map(t => `
+            <div onclick="loadThread(${t.id})" style="cursor:pointer; padding:.4rem; margin:.2rem 0; border-radius:6px; background:${t.id === currentThreadId ? 'var(--pico-primary-focus)' : 'transparent'};">
+                <small><strong>${escapeHtml(t.title.substring(0, 40))}</strong></small><br>
+                <small style="color:var(--pico-muted-color)">${t.message_count} msgs</small>
+            </div>
+        `).join('');
+    } catch(e) {}
+}
+
+async function loadThread(threadId) {
+    currentThreadId = threadId;
+    const container = document.getElementById('chat-messages');
+    container.innerHTML = '<p>Loading...</p>';
+    try {
+        const resp = await apiFetch(`/api/search/chat/${threadId}`);
+        const messages = await resp.json();
+        container.innerHTML = '';
+        messages.forEach(m => container.appendChild(renderMessage(m.role, m.content)));
+        container.scrollTop = container.scrollHeight;
+        loadThreads();
+    } catch(e) {
+        container.innerHTML = '<p>Failed to load thread.</p>';
+    }
+}
+
+document.getElementById('new-chat-btn').addEventListener('click', () => {
+    currentThreadId = null;
+    document.getElementById('chat-messages').innerHTML =
+        '<p style="color: var(--pico-muted-color); text-align: center;">Start a conversation by asking a clinical question.</p>';
+    document.getElementById('chat-status').textContent = '';
+    loadThreads();
+});
+
+document.getElementById('chat-form').addEventListener('submit', sendMessage);
+loadThreads();
+</script>
+{% endblock %}
