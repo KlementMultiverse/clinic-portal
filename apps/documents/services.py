@@ -77,18 +77,16 @@ def delete_s3_object(s3_key):
 # ---------------------------------------------------------------------------
 # Bedrock direct call (used when LAMBDA_SUMMARIZE_ARN is not set)
 # ---------------------------------------------------------------------------
-def _invoke_bedrock(messages, max_tokens=500):
-    """Call Bedrock via REST API with bearer token auth."""
-    token = os.environ.get("AWS_BEARER_TOKEN_BEDROCK", "")
-    if not token:
-        raise RuntimeError("AWS_BEARER_TOKEN_BEDROCK not configured")
+def _invoke_llm(messages, max_tokens=500):
+    """Call Claude API directly (Haiku — cheapest model)."""
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY not configured")
 
-    url = (
-        f"https://bedrock-runtime.{BEDROCK_REGION}.amazonaws.com"
-        f"/model/{BEDROCK_MODEL}/invoke"
-    )
+    model = os.environ.get("LLM_MODEL", "claude-haiku-4-5-20251001")
+    url = "https://api.anthropic.com/v1/messages"
     payload = {
-        "anthropic_version": "bedrock-2023-05-31",
+        "model": model,
         "max_tokens": max_tokens,
         "messages": messages,
     }
@@ -98,7 +96,8 @@ def _invoke_bedrock(messages, max_tokens=500):
         data=json.dumps(payload).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {token}",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
         },
         method="POST",
     )
@@ -109,11 +108,11 @@ def _invoke_bedrock(messages, max_tokens=500):
             return body["content"][0]["text"]
     except urllib.error.HTTPError as e:
         error_body = e.read().decode("utf-8", errors="replace")
-        logger.error("Bedrock HTTP %d: %s", e.code, error_body)
-        raise RuntimeError(f"Bedrock error ({e.code}): {error_body}") from e
+        logger.error("Claude API HTTP %d: %s", e.code, error_body)
+        raise RuntimeError(f"Claude API error ({e.code}): {error_body}") from e
 
 
-def _summarize_via_bedrock(text):
+def _summarize_via_llm(text):
     """Summarize text directly via Bedrock (no Lambda)."""
     messages = [
         {
@@ -125,10 +124,10 @@ def _summarize_via_bedrock(text):
             ),
         },
     ]
-    return _invoke_bedrock(messages, max_tokens=500)
+    return _invoke_llm(messages, max_tokens=500)
 
 
-def _generate_tasks_via_bedrock(workflow_description):
+def _generate_tasks_via_llm(workflow_description):
     """Generate tasks directly via Bedrock (no Lambda)."""
     messages = [
         {
@@ -143,7 +142,7 @@ def _generate_tasks_via_bedrock(workflow_description):
             ),
         },
     ]
-    content = _invoke_bedrock(messages, max_tokens=1000)
+    content = _invoke_llm(messages, max_tokens=1000)
     # Extract JSON from response (may have markdown fences)
     if "```" in content:
         content = content.split("```")[1]
@@ -165,7 +164,7 @@ def invoke_summarize_lambda(text):
     lambda_arn = settings.LAMBDA_SUMMARIZE_ARN
     if not lambda_arn:
         logger.info("LAMBDA_SUMMARIZE_ARN not set — calling Bedrock directly")
-        return _summarize_via_bedrock(text)
+        return _summarize_via_llm(text)
 
     try:
         lambda_client = boto3.client(
@@ -212,7 +211,7 @@ def invoke_generate_tasks_lambda(workflow_description):
     lambda_arn = settings.LAMBDA_SUMMARIZE_ARN
     if not lambda_arn:
         logger.info("LAMBDA_SUMMARIZE_ARN not set — calling Bedrock directly")
-        return _generate_tasks_via_bedrock(workflow_description)
+        return _generate_tasks_via_llm(workflow_description)
 
     try:
         lambda_client = boto3.client(
