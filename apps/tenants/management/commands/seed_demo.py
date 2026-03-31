@@ -13,7 +13,7 @@ class Command(BaseCommand):
         from django.contrib.contenttypes.models import ContentType
 
         from apps.documents.models import Document
-        from apps.tenants.models import Domain, Tenant
+        from apps.tenants.models import Tenant
         from apps.users.models import User
         from apps.workflows.models import AuditLog, Task, Workflow
 
@@ -60,20 +60,30 @@ class Command(BaseCommand):
         # 3. Demo clinic 1 — "Sunrise Clinic"
         # ------------------------------------------------------------------
         self.stdout.write("Creating Sunrise Clinic... ", ending="")
-        demo_domain_name = "clinic1.localhost"
-        if Domain.objects.filter(domain=demo_domain_name).exists():
-            demo_domain = Domain.objects.get(domain=demo_domain_name)
-            demo_tenant = demo_domain.tenant
+        # Check by tenant name OR domain (handles different TENANT_USERS_DOMAIN)
+        demo_tenant = Tenant.objects.filter(name="Sunrise Clinic").first()
+        if demo_tenant:
             self.stdout.write(self.style.SUCCESS("already exists, OK"))
         else:
             from tenant_users.tenants.tasks import provision_tenant
 
-            demo_tenant, demo_domain = provision_tenant(
-                "Sunrise Clinic",
-                "clinic1",
-                admin_user,
-            )
-            self.stdout.write(self.style.SUCCESS("OK"))
+            try:
+                demo_tenant, _ = provision_tenant(
+                    "Sunrise Clinic",
+                    "clinic1",
+                    admin_user,
+                )
+                self.stdout.write(self.style.SUCCESS("OK"))
+            except Exception as e:
+                # Tenant might exist under different domain
+                demo_tenant = Tenant.objects.filter(
+                    schema_name__startswith="clinic1"
+                ).first()
+                if demo_tenant:
+                    self.stdout.write(self.style.SUCCESS("found existing, OK"))
+                else:
+                    self.stdout.write(self.style.ERROR(f"FAILED: {e}"))
+                    return
 
         admin_user.role = "admin"
         admin_user.save()
@@ -82,20 +92,31 @@ class Command(BaseCommand):
         # 4. Demo clinic 2 — "Downtown Medical" (for isolation demo)
         # ------------------------------------------------------------------
         self.stdout.write("Creating Downtown Medical... ", ending="")
-        clinic2_domain_name = "clinic2.localhost"
-        if Domain.objects.filter(domain=clinic2_domain_name).exists():
-            clinic2_domain = Domain.objects.get(domain=clinic2_domain_name)
-            clinic2_tenant = clinic2_domain.tenant
+        clinic2_tenant = (
+            Tenant.objects.filter(name="Downtown Medical").first()
+            or Tenant.objects.filter(name="Valley Health Center").first()
+        )
+        if clinic2_tenant:
             self.stdout.write(self.style.SUCCESS("already exists, OK"))
         else:
             from tenant_users.tenants.tasks import provision_tenant
 
-            clinic2_tenant, clinic2_domain = provision_tenant(
-                "Downtown Medical",
-                "clinic2",
-                admin_user,
-            )
-            self.stdout.write(self.style.SUCCESS("OK"))
+            try:
+                clinic2_tenant, _ = provision_tenant(
+                    "Downtown Medical",
+                    "clinic2",
+                    admin_user,
+                )
+                self.stdout.write(self.style.SUCCESS("OK"))
+            except Exception as e:
+                clinic2_tenant = Tenant.objects.filter(
+                    schema_name__startswith="clinic2"
+                ).first()
+                if clinic2_tenant:
+                    self.stdout.write(self.style.SUCCESS("found existing, OK"))
+                else:
+                    self.stdout.write(self.style.ERROR(f"FAILED: {e}"))
+                    return
 
         # ------------------------------------------------------------------
         # 5. Staff users for Sunrise Clinic
