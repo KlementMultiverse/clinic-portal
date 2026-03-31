@@ -109,6 +109,14 @@ SESSION_CACHE_ALIAS = "default"
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = "Lax"
 SESSION_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_DOMAIN = os.environ.get("SESSION_COOKIE_DOMAIN", None)
+CSRF_COOKIE_DOMAIN = os.environ.get("CSRF_COOKIE_DOMAIN", None)
+CSRF_TRUSTED_ORIGINS = [
+    "http://portal.localhost:8000",
+    "http://clinic1.localhost:8000",
+    "http://clinic2.localhost:8000",
+    "http://localhost:8000",
+]
 
 STATIC_URL = "static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]

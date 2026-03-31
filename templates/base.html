@@ -24,11 +24,13 @@
         </ul>
         <ul>
             {% if user.is_authenticated %}
-                <li><a href="{% url 'dashboard' %}">Dashboard</a></li>
-                <li><a href="{% url 'workflows' %}">Workflows</a></li>
-                <li><a href="{% url 'documents' %}">Documents</a></li>
-                {% if user.role == "admin" %}
-                    <li><a href="{% url 'staff' %}">Staff</a></li>
+                {% if request.tenant and request.tenant.schema_name != "public" %}
+                    <li><a href="/">Dashboard</a></li>
+                    <li><a href="/workflows/">Workflows</a></li>
+                    <li><a href="/documents/">Documents</a></li>
+                    {% if user.role == "admin" %}
+                        <li><a href="/staff/">Staff</a></li>
+                    {% endif %}
                 {% endif %}
                 <li>
                     <button class="outline secondary" id="logout-btn" type="button">
@@ -36,8 +38,8 @@
                     </button>
                 </li>
             {% else %}
-                <li><a href="{% url 'login' %}">Login</a></li>
-                <li><a href="{% url 'register' %}">Register</a></li>
+                <li><a href="/login/">Login</a></li>
+                <li><a href="/register/">Register</a></li>
             {% endif %}
         </ul>
     </nav>
