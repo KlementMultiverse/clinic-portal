@@ -54,7 +54,13 @@
 
     <footer class="container">
         <hr>
-        <p><small>Clinic Portal</small></p>
+        <p><small>
+            {% if request.tenant and request.tenant.schema_name != "public" %}
+                {{ request.tenant.name }} &mdash; Powered by <a href="http://portal.localhost:8000/">Clinic Portal</a>
+            {% else %}
+                <a href="http://portal.localhost:8000/">Clinic Portal</a> &mdash; Multi-tenant Clinical QA Platform
+            {% endif %}
+        </small></p>
     </footer>
 
     <script src="{% static 'app.js' %}"></script>
