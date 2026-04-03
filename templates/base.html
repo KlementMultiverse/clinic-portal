@@ -1,0 +1,69 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <title>{% block title %}Clinic Portal{% endblock %}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <link rel="stylesheet" href="{% static 'styles.css' %}">
+</head>
+<body>
+    <nav class="container-fluid">
+        <ul>
+            <li>
+                <strong>
+                    {% if request.tenant and request.tenant.schema_name != "public" %}
+                        {{ request.tenant.name }}
+                    {% else %}
+                        Clinic Portal
+                    {% endif %}
+                </strong>
+            </li>
+        </ul>
+        <ul>
+            {% if user.is_authenticated %}
+                {% if request.tenant and request.tenant.schema_name != "public" %}
+                    <li><a href="/">Dashboard</a></li>
+                    <li><a href="/workflows/">Workflows</a></li>
+                    <li><a href="/documents/">Documents</a></li>
+                    <li><a href="/search/">Search</a></li>
+                    <li><a href="/chat/">Ask AI</a></li>
+                    {% if user.role == "admin" %}
+                        <li><a href="/staff/">Staff</a></li>
+                    {% endif %}
+                {% endif %}
+                <li>
+                    <button class="outline secondary" id="logout-btn" type="button">
+                        Logout
+                    </button>
+                </li>
+            {% else %}
+                {% if request.tenant and request.tenant.schema_name != "public" %}
+                    <li><a href="/login/">Login</a></li>
+                {% endif %}
+            {% endif %}
+        </ul>
+    </nav>
+
+    <main class="container">
+        <div id="alert-container"></div>
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="container">
+        <hr>
+        <p><small>
+            {% if request.tenant and request.tenant.schema_name != "public" %}
+                {{ request.tenant.name }} &mdash; Powered by <a href="http://portal.localhost:8000/">Clinic Portal</a>
+            {% else %}
+                <a href="http://portal.localhost:8000/">Clinic Portal</a> &mdash; Multi-tenant Clinical QA Platform
+            {% endif %}
+        </small></p>
+    </footer>
+
+    <script src="{% static 'app.js' %}"></script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

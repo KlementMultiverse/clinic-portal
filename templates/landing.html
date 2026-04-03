@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+
+{% block title %}Clinic Portal - Create Your Workspace{% endblock %}
+
+{% block content %}
+<section>
+    <hgroup>
+        <h1>Create your clinic workspace</h1>
+        <p>Multi-tenant SaaS management portal for medical clinics</p>
+    </hgroup>
+</section>
+
+<section>
+    <div class="grid">
+        <div>
+            <article>
+                <header>
+                    <h3>Sign Up</h3>
+                </header>
+                <form id="signup-form">
+                    <label for="clinic-name">Clinic Name</label>
+                    <input type="text" id="clinic-name" name="clinic_name" placeholder="My Clinic" required>
+
+                    <label for="subdomain">Subdomain</label>
+                    <input type="text" id="subdomain" name="subdomain" placeholder="myclinic" required>
+                    <small>Your workspace will be at <strong><span id="subdomain-preview">myclinic</span>.<span id="base-domain">localhost</span></strong></small>
+
+                    <label for="signup-email">Email</label>
+                    <input type="email" id="signup-email" name="email" placeholder="admin@example.com" required>
+
+                    <label for="signup-password">Password</label>
+                    <input type="password" id="signup-password" name="password" minlength="8" required>
+
+                    <button type="submit">Create Workspace</button>
+                </form>
+                <footer>
+                    <p>Already have a clinic? <a href="/login/">Go to Login</a></p>
+                    <p><small>Admin login: use your clinic's subdomain (e.g., clinic1.<span class="base-domain-text">localhost</span>/login/)</small></p>
+                </footer>
+            </article>
+        </div>
+
+        <div>
+            <article>
+                <header>
+                    <h3>Features</h3>
+                </header>
+                <ul>
+                    <li>Isolated workspace per clinic</li>
+                    <li>Workflow and task management</li>
+                    <li>Document storage with AI summarization</li>
+                    <li>Staff management and role-based access</li>
+                </ul>
+            </article>
+        </div>
+    </div>
+</section>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Detect base domain from current hostname
+var hostParts = window.location.hostname.split('.');
+var baseDomain = hostParts.length > 2 ? hostParts.slice(1).join('.') : window.location.hostname;
+// Update domain display
+var baseDomainEl = document.getElementById('base-domain');
+if (baseDomainEl) baseDomainEl.textContent = baseDomain;
+var baseDomainTexts = document.querySelectorAll('.base-domain-text');
+baseDomainTexts.forEach(function(el) { el.textContent = baseDomain; });
+
+// Auto-populate subdomain from clinic name
+document.getElementById('clinic-name').addEventListener('input', function() {
+    const slug = this.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').substring(0, 30);
+    document.getElementById('subdomain').value = slug;
+    document.getElementById('subdomain-preview').textContent = slug || 'myclinic';
+});
+document.getElementById('subdomain').addEventListener('input', function() {
+    document.getElementById('subdomain-preview').textContent = this.value || 'myclinic';
+});
+
+document.getElementById('signup-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const email = document.getElementById('signup-email').value;
+    const password = document.getElementById('signup-password').value;
+    const clinicName = document.getElementById('clinic-name').value;
+    const subdomain = document.getElementById('subdomain').value;
+
+    const btn = this.querySelector('button[type="submit"]');
+    btn.setAttribute('aria-busy', 'true');
+    btn.textContent = 'Creating workspace...';
+    btn.disabled = true;
+
+    function resetBtn(msg) {
+        showAlert(msg, 'error');
+        btn.setAttribute('aria-busy', 'false');
+        btn.textContent = 'Create Workspace';
+        btn.disabled = false;
+    }
+
+    try {
+        // Step 1: Logout any existing session first
+        await apiFetch('/api/auth/logout', { method: 'POST' }).catch(function(){});
+
+        // Step 2: Register user (or skip if already exists)
+        let resp = await apiFetch('/api/auth/register', {
+            method: 'POST',
+            body: JSON.stringify({ email: email, password: password, name: clinicName }),
+        });
+        if (!resp.ok && resp.status !== 409) {
+            const err = await resp.json();
+            resetBtn(err.message || 'Registration failed.');
+            return;
+        }
+
+        // Step 3: Login
+        var userExisted = (resp.status === 409);
+        resp = await apiFetch('/api/auth/login', {
+            method: 'POST',
+            body: JSON.stringify({ email: email, password: password }),
+        });
+        if (!resp.ok) {
+            if (userExisted) {
+                resetBtn('This email is already registered. Please enter the correct password for this account, or use a different email.');
+            } else {
+                const err = await resp.json();
+                resetBtn(err.message || 'Login failed.');
+            }
+            return;
+        }
+
+        // Step 4: Create tenant
+        resp = await apiFetch('/api/tenants/', {
+            method: 'POST',
+            body: JSON.stringify({ name: clinicName, subdomain: subdomain }),
+        });
+        if (!resp.ok) {
+            const err = await resp.json();
+            resetBtn(err.message || 'Workspace creation failed.');
+            return;
+        }
+
+        showAlert('Workspace created! Redirecting to ' + clinicName + '...', 'success');
+        const port = window.location.port ? ':' + window.location.port : '';
+        const protocol = window.location.protocol;
+        setTimeout(function() {
+            window.location.href = protocol + '//' + subdomain + '.' + baseDomain + port + '/';
+        }, 1500);
+    } catch (err) {
+        resetBtn('Something went wrong: ' + err.message);
+    }
+});
+</script>
+{% endblock %}

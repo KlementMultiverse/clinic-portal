@@ -1,0 +1,27 @@
+from django.contrib import admin
+from django.urls import path
+
+from apps.users.api import api
+from config.views import (
+    chat_view,
+    dashboard,
+    documents,
+    login_view,
+    register_view,
+    search_view,
+    staff,
+    workflows,
+)
+
+urlpatterns = [
+    path("admin/", admin.site.urls),
+    path("api/", api.urls),
+    path("", dashboard, name="dashboard"),
+    path("login/", login_view, name="login"),
+    path("register/", register_view, name="register"),
+    path("workflows/", workflows, name="workflows"),
+    path("documents/", documents, name="documents"),
+    path("staff/", staff, name="staff"),
+    path("search/", search_view, name="search"),
+    path("chat/", chat_view, name="chat"),
+]

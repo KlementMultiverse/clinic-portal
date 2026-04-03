@@ -1,0 +1,269 @@
+{% extends "base.html" %}
+
+{% block title %}Workflows - Clinic Portal{% endblock %}
+
+{% block content %}
+<section>
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h1>Workflows</h1>
+        {% if user.role == "admin" %}
+        <button id="new-workflow-btn">New Workflow</button>
+        {% endif %}
+    </div>
+</section>
+
+<!-- New workflow form (hidden by default) -->
+<dialog id="workflow-dialog">
+    <article>
+        <header>
+            <button aria-label="Close" rel="prev" class="close-dialog"></button>
+            <h3>New Workflow</h3>
+        </header>
+        <form id="workflow-form">
+            <label for="wf-name">Name</label>
+            <input type="text" id="wf-name" name="name" required>
+            <label for="wf-description">Description</label>
+            <textarea id="wf-description" name="description" rows="3"></textarea>
+            <button type="submit">Create</button>
+        </form>
+    </article>
+</dialog>
+
+<!-- Workflow list -->
+<section id="workflow-list">
+    <p>Loading workflows...</p>
+</section>
+
+<!-- Workflow detail view (shown when a workflow is clicked) -->
+<dialog id="workflow-detail-dialog">
+    <article style="max-width: 800px;">
+        <header>
+            <button aria-label="Close" rel="prev" class="close-dialog"></button>
+            <h3 id="detail-wf-name"></h3>
+        </header>
+        <p id="detail-wf-description"></p>
+        {% if user.role == "admin" %}
+        <div style="margin-bottom: 1rem;">
+            <button id="generate-tasks-btn" class="outline">Generate Tasks with AI</button>
+        </div>
+        {% endif %}
+        <h4>Tasks</h4>
+        <div id="detail-task-list"></div>
+    </article>
+</dialog>
+
+<!-- Assign dialog -->
+<dialog id="assign-dialog">
+    <article>
+        <header>
+            <button aria-label="Close" rel="prev" class="close-dialog"></button>
+            <h3>Assign Task</h3>
+        </header>
+        <form id="assign-form">
+            <input type="hidden" id="assign-task-id">
+            <label for="assign-user-id">Staff User ID</label>
+            <input type="number" id="assign-user-id" required>
+            <button type="submit">Assign</button>
+        </form>
+    </article>
+</dialog>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const VALID_TRANSITIONS = {
+    'created': ['assigned', 'cancelled'],
+    'assigned': ['in_progress', 'cancelled'],
+    'in_progress': ['completed', 'cancelled'],
+    'completed': [],
+    'cancelled': [],
+};
+
+const isAdmin = '{{ user.role }}' === 'admin';
+let currentWorkflowId = null;
+
+// Close dialog buttons
+document.querySelectorAll('.close-dialog').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        this.closest('dialog').close();
+    });
+});
+
+// New workflow
+const newBtn = document.getElementById('new-workflow-btn');
+if (newBtn) {
+    newBtn.addEventListener('click', function() {
+        document.getElementById('workflow-dialog').showModal();
+    });
+}
+
+document.getElementById('workflow-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const name = document.getElementById('wf-name').value;
+    const description = document.getElementById('wf-description').value;
+    const resp = await apiFetch('/api/workflows/', {
+        method: 'POST',
+        body: JSON.stringify({ name: name, description: description }),
+    });
+    if (resp.ok) {
+        document.getElementById('workflow-dialog').close();
+        document.getElementById('wf-name').value = '';
+        document.getElementById('wf-description').value = '';
+        loadWorkflows();
+    } else {
+        const err = await resp.json();
+        showAlert(err.message || err.detail || 'Failed to create workflow.', 'error');
+    }
+});
+
+async function loadWorkflows() {
+    const resp = await apiFetch('/api/workflows/');
+    const container = document.getElementById('workflow-list');
+    if (!resp.ok) {
+        container.innerHTML = '<p>Failed to load workflows.</p>';
+        return;
+    }
+    const workflows = await resp.json();
+    if (workflows.length === 0) {
+        container.innerHTML = '<p>No workflows yet.</p>';
+        return;
+    }
+    container.innerHTML = '';
+    for (const wf of workflows) {
+        const article = document.createElement('article');
+        article.style.cursor = 'pointer';
+        article.innerHTML = '<header><strong>' + escapeHtml(wf.name) + '</strong></header>' +
+            '<p>' + escapeHtml(wf.description || 'No description') + '</p>' +
+            '<small>Created: ' + new Date(wf.created_at).toLocaleDateString() + '</small>';
+        article.addEventListener('click', function() { showWorkflowDetail(wf.id); });
+        container.appendChild(article);
+    }
+}
+
+async function showWorkflowDetail(workflowId) {
+    currentWorkflowId = workflowId;
+    const resp = await apiFetch('/api/workflows/' + workflowId);
+    if (!resp.ok) {
+        showAlert('Failed to load workflow.', 'error');
+        return;
+    }
+    const wf = await resp.json();
+    document.getElementById('detail-wf-name').textContent = wf.name;
+    document.getElementById('detail-wf-description').textContent = wf.description || 'No description';
+    renderTasks(wf.tasks);
+    document.getElementById('workflow-detail-dialog').showModal();
+}
+
+function renderTasks(tasks) {
+    const container = document.getElementById('detail-task-list');
+    if (tasks.length === 0) {
+        container.innerHTML = '<p>No tasks yet.</p>';
+        return;
+    }
+    container.innerHTML = '';
+    for (const task of tasks) {
+        const div = document.createElement('article');
+        let html = '<header><strong>' + escapeHtml(task.title) + '</strong> ' +
+            '<span class="badge badge-' + task.status + '">' + task.status.replace('_', ' ') + '</span></header>';
+        html += '<p>' + escapeHtml(task.description || '') + '</p>';
+
+        // Transition buttons
+        const transitions = VALID_TRANSITIONS[task.status] || [];
+        if (transitions.length > 0) {
+            html += '<div class="task-actions">';
+            for (const target of transitions) {
+                html += '<button class="outline transition-btn" data-task-id="' + task.id +
+                    '" data-status="' + target + '">' + target.replace('_', ' ') + '</button> ';
+            }
+            html += '</div>';
+        }
+
+        // Admin actions
+        if (isAdmin) {
+            html += '<div class="task-actions">';
+            html += '<button class="outline secondary assign-btn" data-task-id="' + task.id +
+                '">Assign</button>';
+            html += '</div>';
+        }
+
+        if (task.assigned_to_id) {
+            html += '<small>Assigned to user #' + task.assigned_to_id + '</small>';
+        }
+
+        div.innerHTML = html;
+        container.appendChild(div);
+    }
+
+    // Bind transition buttons
+    container.querySelectorAll('.transition-btn').forEach(function(btn) {
+        btn.addEventListener('click', async function(e) {
+            e.stopPropagation();
+            const taskId = this.dataset.taskId;
+            const newStatus = this.dataset.status;
+            const resp = await apiFetch('/api/tasks/' + taskId + '/transition', {
+                method: 'POST',
+                body: JSON.stringify({ new_status: newStatus }),
+            });
+            if (resp.ok) {
+                showWorkflowDetail(currentWorkflowId);
+            } else {
+                const err = await resp.json();
+                showAlert(err.message || 'Transition failed.', 'error');
+            }
+        });
+    });
+
+    // Bind assign buttons
+    container.querySelectorAll('.assign-btn').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            document.getElementById('assign-task-id').value = this.dataset.taskId;
+            document.getElementById('assign-dialog').showModal();
+        });
+    });
+}
+
+// Assign form
+document.getElementById('assign-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const taskId = document.getElementById('assign-task-id').value;
+    const userId = document.getElementById('assign-user-id').value;
+    const resp = await apiFetch('/api/tasks/' + taskId + '/assign', {
+        method: 'POST',
+        body: JSON.stringify({ user_id: parseInt(userId) }),
+    });
+    if (resp.ok) {
+        document.getElementById('assign-dialog').close();
+        showWorkflowDetail(currentWorkflowId);
+    } else {
+        const err = await resp.json();
+        showAlert(err.message || 'Assignment failed.', 'error');
+    }
+});
+
+// Generate tasks with AI
+const genBtn = document.getElementById('generate-tasks-btn');
+if (genBtn) {
+    genBtn.addEventListener('click', async function() {
+        if (!currentWorkflowId) return;
+        this.setAttribute('aria-busy', 'true');
+        this.disabled = true;
+        const resp = await apiFetch('/api/workflows/' + currentWorkflowId + '/generate-tasks', {
+            method: 'POST',
+        });
+        this.setAttribute('aria-busy', 'false');
+        this.disabled = false;
+        if (resp.ok) {
+            showAlert('Tasks generated successfully.', 'success');
+            showWorkflowDetail(currentWorkflowId);
+        } else {
+            const err = await resp.json();
+            showAlert(err.message || 'Task generation failed.', 'error');
+        }
+    });
+}
+
+loadWorkflows();
+</script>
+{% endblock %}

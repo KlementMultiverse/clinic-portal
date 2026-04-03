@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+{% block title %}Clinical QA — {{ request.tenant.name }}{% endblock %}
+
+{% block content %}
+<div style="display:flex; gap:1rem; height:calc(100vh - 180px);">
+    <!-- Thread sidebar -->
+    <aside style="width:200px; min-width:160px; border-right:1px solid var(--pico-muted-border-color); padding-right:1rem; overflow-y:auto;">
+        <button id="new-chat-btn" class="outline" style="width:100%; margin-bottom:.75rem; padding:.4rem;">+ New Chat</button>
+        <div id="thread-list" style="font-size:.85rem;">
+            <small style="color:var(--pico-muted-color);">Loading...</small>
+        </div>
+    </aside>
+
+    <!-- Chat area -->
+    <div style="flex:1; display:flex; flex-direction:column;">
+        <div id="chat-messages" style="flex:1; overflow-y:auto; border:1px solid var(--pico-muted-border-color); border-radius:8px; padding:1rem; margin-bottom:.75rem; background:var(--pico-background-color);">
+            <p style="color:var(--pico-muted-color); text-align:center; margin-top:2rem;">
+                Ask anything — clinical questions, drug info, trial searches.<br>
+                <small>The AI will search medical databases when needed and cite sources.</small>
+            </p>
+        </div>
+
+        <!-- Search results panel (shown when AI searches) -->
+        <details id="search-results-panel" style="display:none; border:1px solid var(--pico-primary); border-radius:8px; padding:.75rem; margin-bottom:.75rem; font-size:.85rem;" open>
+            <summary style="cursor:pointer; font-weight:bold;" id="search-results-title">Search Results</summary>
+            <div id="search-results-content" style="margin-top:.5rem; max-height:300px; overflow-y:auto;"></div>
+        </details>
+
+        <div style="display:flex; gap:.5rem;">
+            <input type="text" id="chat-input"
+                   placeholder="Ask about trials, drugs, conditions... or just chat"
+                   style="flex:1; margin-bottom:0;" autocomplete="off">
+            <button type="button" id="send-btn" style="margin-bottom:0; width:auto; padding:.5rem 1.5rem;">Send</button>
+        </div>
+        <small id="chat-status" style="color:var(--pico-muted-color); margin-top:.25rem;"></small>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var currentThreadId = null;
+
+function renderMessage(role, content, sources) {
+    var div = document.createElement('div');
+    div.style.cssText = role === 'user'
+        ? 'text-align:right; margin:.5rem 0;'
+        : 'text-align:left; margin:.5rem 0;';
+    var bubble = document.createElement('div');
+    bubble.style.cssText = role === 'user'
+        ? 'display:inline-block; background:var(--pico-primary-background); color:var(--pico-primary-inverse); padding:.6rem 1rem; border-radius:12px; max-width:80%; text-align:left;'
+        : 'display:inline-block; background:#f0f4f8; color:#1a1a1a; padding:.6rem 1rem; border-radius:12px; max-width:80%; text-align:left; line-height:1.5; border:1px solid #dde3ea;';
+
+    var html = escapeHtml(content);
+    // Link citations
+    html = html.replace(/\[NCT(\d+)\]/g, '<a href="https://clinicaltrials.gov/study/NCT$1" target="_blank" style="color:var(--pico-primary);">[NCT$1]</a>');
+    html = html.replace(/\[PMID:\s*(\d+)\]/g, '<a href="https://pubmed.ncbi.nlm.nih.gov/$1/" target="_blank" style="color:var(--pico-primary);">[PMID:$1]</a>');
+    html = html.replace(/\n/g, '<br>');
+    bubble.innerHTML = html;
+    div.appendChild(bubble);
+    return div;
+}
+
+function showSearchResults(trials, papers) {
+    if (!trials.length && !papers.length) return;
+    var panel = document.getElementById('search-results-panel');
+    var content = document.getElementById('search-results-content');
+    var title = document.getElementById('search-results-title');
+    title.textContent = 'Sources: ' + trials.length + ' trials, ' + papers.length + ' papers (click to collapse)';
+
+    var colors = {'RECRUITING':'#2ecc40','ACTIVE_NOT_RECRUITING':'#0074d9','COMPLETED':'#aaa','TERMINATED':'#ff4136','WITHDRAWN':'#ff851b'};
+
+    var html = '<div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem;">';
+
+    // Trials column
+    html += '<div><strong style="font-size:.8rem;">Clinical Trials</strong>';
+    for (var i = 0; i < trials.length; i++) {
+        var t = trials[i];
+        var c = colors[t.status] || '#666';
+        html += '<div style="margin:.4rem 0; padding:.3rem; border-left:3px solid ' + c + '; padding-left:.5rem;">';
+        html += '<a href="https://clinicaltrials.gov/study/' + escapeHtml(t.nct_id) + '" target="_blank" style="font-size:.8rem;">' + escapeHtml(t.title.substring(0, 70)) + '</a><br>';
+        html += '<small>' + escapeHtml(t.nct_id) + ' &middot; <span style="color:' + c + ';">' + escapeHtml(t.status.replace(/_/g,' ')) + '</span></small>';
+        html += '</div>';
+    }
+    if (!trials.length) html += '<small style="color:var(--pico-muted-color);">No trials found</small>';
+    html += '</div>';
+
+    // Papers column
+    html += '<div><strong style="font-size:.8rem;">Research Papers</strong>';
+    for (var i = 0; i < papers.length; i++) {
+        var p = papers[i];
+        html += '<div style="margin:.4rem 0; padding:.3rem; border-left:3px solid var(--pico-primary); padding-left:.5rem;">';
+        html += '<a href="https://pubmed.ncbi.nlm.nih.gov/' + escapeHtml(p.pmid) + '/" target="_blank" style="font-size:.8rem;">' + escapeHtml(p.title.substring(0, 70)) + '</a><br>';
+        html += '<small>PMID:' + escapeHtml(p.pmid) + ' &middot; ' + escapeHtml((p.authors || '').substring(0, 40)) + '</small>';
+        html += '</div>';
+    }
+    if (!papers.length) html += '<small style="color:var(--pico-muted-color);">No papers found</small>';
+    html += '</div></div>';
+
+    content.innerHTML = html;
+    panel.style.display = 'block';
+}
+
+async function sendMessage() {
+    var input = document.getElementById('chat-input');
+    var msg = input.value.trim();
+    if (!msg) return;
+
+    var container = document.getElementById('chat-messages');
+    // Clear placeholder
+    if (!currentThreadId && container.querySelector('p')) {
+        container.innerHTML = '';
+    }
+
+    container.appendChild(renderMessage('user', msg));
+    input.value = '';
+    input.disabled = true;
+    document.getElementById('send-btn').disabled = true;
+    document.getElementById('chat-status').textContent = 'Searching databases & thinking...';
+    container.scrollTop = container.scrollHeight;
+
+    try {
+        var resp = await apiFetch('/api/search/chat', {
+            method: 'POST',
+            body: JSON.stringify({ message: msg, thread_id: currentThreadId })
+        });
+        var data = await resp.json();
+        if (resp.ok) {
+            currentThreadId = data.thread_id;
+            container.appendChild(renderMessage('assistant', data.message));
+
+            // Show search results if context was loaded
+            if (data.trials && data.trials.length > 0 || data.papers && data.papers.length > 0) {
+                showSearchResults(data.trials || [], data.papers || []);
+                document.getElementById('chat-status').textContent =
+                    data.trials_count + ' trials, ' + data.papers_count + ' papers loaded';
+            } else {
+                document.getElementById('chat-status').textContent = '';
+            }
+            loadThreads();
+        } else {
+            container.appendChild(renderMessage('assistant', data.message || 'Error — try again.'));
+            document.getElementById('chat-status').textContent = '';
+        }
+    } catch (err) {
+        container.appendChild(renderMessage('assistant', 'Network error — try again.'));
+        document.getElementById('chat-status').textContent = '';
+    }
+
+    input.disabled = false;
+    document.getElementById('send-btn').disabled = false;
+    input.focus();
+    container.scrollTop = container.scrollHeight;
+}
+
+async function loadThreads() {
+    try {
+        var resp = await apiFetch('/api/search/chat/threads');
+        var threads = await resp.json();
+        var list = document.getElementById('thread-list');
+        if (!threads.length) {
+            list.innerHTML = '<small style="color:var(--pico-muted-color);">No conversations yet</small>';
+            return;
+        }
+        var html = '';
+        for (var i = 0; i < threads.length; i++) {
+            var t = threads[i];
+            var active = t.id === currentThreadId ? 'background:var(--pico-primary-focus);' : '';
+            html += '<div onclick="loadThread(' + t.id + ')" style="cursor:pointer; padding:.4rem; margin:.2rem 0; border-radius:6px; ' + active + '">';
+            html += '<small><strong>' + escapeHtml(t.title.substring(0, 35)) + '</strong></small><br>';
+            var d = new Date(t.updated_at);
+            var now = new Date();
+            var timeStr = (d.toDateString() === now.toDateString())
+                ? d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit', hour12:true})
+                : (d.getMonth()+1) + '/' + d.getDate();
+            html += '<small style="color:var(--pico-muted-color);">' + t.message_count + ' msgs &middot; ' + timeStr + '</small>';
+            html += '</div>';
+        }
+        list.innerHTML = html;
+    } catch(e) {
+        document.getElementById('thread-list').innerHTML = '<small>Error loading</small>';
+    }
+}
+
+async function loadThread(threadId) {
+    currentThreadId = threadId;
+    var container = document.getElementById('chat-messages');
+    container.innerHTML = '<p style="color:var(--pico-muted-color);">Loading...</p>';
+    try {
+        var resp = await apiFetch('/api/search/chat/' + threadId);
+        var messages = await resp.json();
+        container.innerHTML = '';
+        for (var i = 0; i < messages.length; i++) {
+            container.appendChild(renderMessage(messages[i].role, messages[i].content));
+        }
+        container.scrollTop = container.scrollHeight;
+        loadThreads();
+    } catch(e) {
+        container.innerHTML = '<p>Failed to load.</p>';
+    }
+}
+
+document.getElementById('new-chat-btn').addEventListener('click', function() {
+    currentThreadId = null;
+    document.getElementById('chat-messages').innerHTML =
+        '<p style="color:var(--pico-muted-color); text-align:center; margin-top:2rem;">Ask anything — clinical questions, drug info, trial searches.<br><small>The AI will search medical databases when needed and cite sources.</small></p>';
+    document.getElementById('chat-status').textContent = '';
+    document.getElementById('search-results-panel').style.display = 'none';
+    loadThreads();
+});
+
+document.getElementById('send-btn').addEventListener('click', sendMessage);
+document.getElementById('chat-input').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { e.preventDefault(); sendMessage(); }
+});
+
+loadThreads();
+</script>
+{% endblock %}

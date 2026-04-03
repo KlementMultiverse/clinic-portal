@@ -1,0 +1,100 @@
+/*
+ * Clinic Portal - Custom styles.
+ * Pico CSS handles most styling via CDN.
+ * Per CLAUDE.md Rule #15: no Tailwind, no build step.
+ */
+
+/* Auth forms: constrain width */
+.auth-form {
+    max-width: 480px;
+    margin: 2rem auto;
+}
+
+/* Stat value display */
+.stat-value {
+    font-size: 2.5rem;
+    font-weight: bold;
+    text-align: center;
+    margin: 0.5rem 0;
+}
+
+/* Status badges */
+.badge {
+    display: inline-block;
+    padding: 0.2em 0.6em;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: capitalize;
+    color: #fff;
+}
+
+.badge-created {
+    background-color: #6c757d;
+}
+
+.badge-assigned {
+    background-color: #0d6efd;
+}
+
+.badge-in_progress {
+    background-color: #fd7e14;
+}
+
+.badge-completed {
+    background-color: #198754;
+}
+
+.badge-cancelled {
+    background-color: #dc3545;
+}
+
+/* Role badges */
+.badge-admin {
+    background-color: #6f42c1;
+}
+
+.badge-staff {
+    background-color: #0dcaf0;
+    color: #000;
+}
+
+/* Task action buttons row */
+.task-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-top: 0.5rem;
+}
+
+.task-actions button {
+    margin: 0;
+    padding: 0.3em 0.8em;
+    font-size: 0.85rem;
+}
+
+/* Alert messages */
+.alert {
+    padding: 0.75rem 1rem;
+    border-radius: 4px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+}
+
+.alert-success {
+    background-color: #d1e7dd;
+    color: #0f5132;
+    border: 1px solid #badbcc;
+}
+
+.alert-error {
+    background-color: #f8d7da;
+    color: #842029;
+    border: 1px solid #f5c2c7;
+}
+
+.alert-info {
+    background-color: #cff4fc;
+    color: #055160;
+    border: 1px solid #b6effb;
+}

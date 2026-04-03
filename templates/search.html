@@ -1,0 +1,240 @@
+{% extends "base.html" %}
+{% block title %}Clinical Search — {{ request.tenant.name }}{% endblock %}
+
+{% block content %}
+<h2>Clinical QA Search</h2>
+<p>Search clinical trials and research papers from ClinicalTrials.gov and PubMed.</p>
+
+<div role="search">
+    <input type="text" id="search-input"
+           placeholder="Search clinical trials and papers... (e.g. SGLT2 inhibitors, metformin diabetes)"
+           style="width:100%; margin-bottom:.5rem;" required>
+    <button type="button" id="search-btn" style="width:auto; padding:.5rem 2rem;">Search</button>
+</div>
+
+<!-- AI Summary -->
+<article id="summary-card" style="display:none; background:var(--pico-card-background-color); border-left:4px solid var(--pico-primary); padding:1rem;">
+    <strong>AI Summary</strong>
+    <p id="summary-text" style="margin-top:.5rem;"></p>
+    <small id="rewritten-query" style="color:var(--pico-muted-color);"></small>
+</article>
+
+<!-- Results -->
+<div id="results-area" style="display:none;">
+    <div class="grid">
+        <!-- Trials column -->
+        <div>
+            <h3>Clinical Trials <span id="trials-count" style="font-size:.8rem; color:var(--pico-muted-color);"></span></h3>
+            <div id="trial-filters" style="margin-bottom:.5rem; display:flex; gap:.3rem; flex-wrap:wrap;"></div>
+            <div id="trials-list"></div>
+            <div id="trials-pagination" style="display:flex; gap:.5rem; justify-content:center; align-items:center; margin-top:.5rem;"></div>
+        </div>
+        <!-- Papers column -->
+        <div>
+            <h3>Research Papers <span id="papers-count" style="font-size:.8rem; color:var(--pico-muted-color);"></span></h3>
+            <div id="papers-list"></div>
+            <div id="papers-pagination" style="display:flex; gap:.5rem; justify-content:center; align-items:center; margin-top:.5rem;"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Search History -->
+<details style="margin-top:2rem;" open>
+    <summary style="cursor:pointer; font-size:1.2rem; font-weight:bold;">Search History</summary>
+    <div id="history-list"><p>Loading history...</p></div>
+</details>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const PER_PAGE = 5;
+let allTrials = [];
+let allPapers = [];
+let trialsPage = 1;
+let papersPage = 1;
+let activeFilter = 'all';
+
+function statusBadge(status) {
+    const colors = {
+        'RECRUITING': '#2ecc40', 'ACTIVE_NOT_RECRUITING': '#0074d9',
+        'COMPLETED': '#aaa', 'TERMINATED': '#ff4136',
+        'WITHDRAWN': '#ff851b', 'NOT_YET_RECRUITING': '#b10dc9',
+        'Unknown': '#666'
+    };
+    const color = colors[status] || '#666';
+    const label = status.replace(/_/g, ' ');
+    return '<span style="display:inline-block;padding:2px 8px;border-radius:12px;font-size:.7rem;color:#fff;background:' + color + ';">' + escapeHtml(label) + '</span>';
+}
+
+function renderTrials() {
+    const filtered = activeFilter === 'all' ? allTrials : allTrials.filter(function(t) { return t.status === activeFilter; });
+    const totalPages = Math.ceil(filtered.length / PER_PAGE) || 1;
+    if (trialsPage > totalPages) trialsPage = totalPages;
+    const start = (trialsPage - 1) * PER_PAGE;
+    const page = filtered.slice(start, start + PER_PAGE);
+
+    var container = document.getElementById('trials-list');
+    if (filtered.length === 0) {
+        container.innerHTML = '<p><small>No trials match this filter.</small></p>';
+    } else {
+        var html = '';
+        for (var i = 0; i < page.length; i++) {
+            var t = page[i];
+            html += '<article style="padding:.5rem .75rem;margin-bottom:.5rem;">';
+            html += '<a href="https://clinicaltrials.gov/study/' + escapeHtml(t.nct_id) + '" target="_blank" style="font-size:.85rem;">' + escapeHtml(t.title) + '</a><br>';
+            html += '<small>' + escapeHtml(t.nct_id) + '</small> ' + statusBadge(t.status);
+            if (t.summary) {
+                html += '<p style="font-size:.78rem;color:var(--pico-muted-color);margin-top:.25rem;">' + escapeHtml(t.summary.substring(0, 150)) + '...</p>';
+            }
+            html += '</article>';
+        }
+        container.innerHTML = html;
+    }
+
+    var pagDiv = document.getElementById('trials-pagination');
+    if (totalPages <= 1) { pagDiv.innerHTML = ''; return; }
+    var ph = '';
+    if (trialsPage > 1) ph += '<button class="outline" style="padding:4px 12px;font-size:.8rem;" onclick="trialsPage--;renderTrials();">Prev</button>';
+    ph += '<small>' + trialsPage + ' / ' + totalPages + ' (' + filtered.length + ' trials)</small>';
+    if (trialsPage < totalPages) ph += '<button class="outline" style="padding:4px 12px;font-size:.8rem;" onclick="trialsPage++;renderTrials();">Next</button>';
+    pagDiv.innerHTML = ph;
+}
+
+function renderPapers() {
+    var totalPages = Math.ceil(allPapers.length / PER_PAGE) || 1;
+    if (papersPage > totalPages) papersPage = totalPages;
+    var start = (papersPage - 1) * PER_PAGE;
+    var page = allPapers.slice(start, start + PER_PAGE);
+
+    var container = document.getElementById('papers-list');
+    if (allPapers.length === 0) {
+        container.innerHTML = '<p><small>No papers found.</small></p>';
+    } else {
+        var html = '';
+        for (var i = 0; i < page.length; i++) {
+            var p = page[i];
+            html += '<article style="padding:.5rem .75rem;margin-bottom:.5rem;">';
+            html += '<a href="https://pubmed.ncbi.nlm.nih.gov/' + escapeHtml(p.pmid) + '/" target="_blank" style="font-size:.85rem;">' + escapeHtml(p.title) + '</a><br>';
+            html += '<small style="color:var(--pico-primary);">PMID: ' + escapeHtml(p.pmid) + '</small><br>';
+            html += '<small style="color:var(--pico-muted-color);">' + escapeHtml(p.authors || '') + '</small><br>';
+            html += '<small style="color:var(--pico-muted-color);">' + escapeHtml(p.journal || '') + ' &middot; ' + escapeHtml(p.pub_date || '') + '</small>';
+            html += '</article>';
+        }
+        container.innerHTML = html;
+    }
+
+    var pagDiv = document.getElementById('papers-pagination');
+    if (totalPages <= 1) { pagDiv.innerHTML = ''; return; }
+    var ph = '';
+    if (papersPage > 1) ph += '<button class="outline" style="padding:4px 12px;font-size:.8rem;" onclick="papersPage--;renderPapers();">Prev</button>';
+    ph += '<small>' + papersPage + ' / ' + totalPages + ' (' + allPapers.length + ' papers)</small>';
+    if (papersPage < totalPages) ph += '<button class="outline" style="padding:4px 12px;font-size:.8rem;" onclick="papersPage++;renderPapers();">Next</button>';
+    pagDiv.innerHTML = ph;
+}
+
+function renderFilters() {
+    var statuses = {};
+    for (var i = 0; i < allTrials.length; i++) {
+        var s = allTrials[i].status;
+        statuses[s] = (statuses[s] || 0) + 1;
+    }
+    var container = document.getElementById('trial-filters');
+    var html = '<button class="' + (activeFilter === 'all' ? '' : 'outline secondary') + '" style="padding:2px 10px;font-size:.75rem;" onclick="activeFilter=\'all\';trialsPage=1;renderTrials();renderFilters();">All (' + allTrials.length + ')</button>';
+    var entries = Object.entries(statuses).sort(function(a,b) { return b[1] - a[1]; });
+    for (var i = 0; i < entries.length; i++) {
+        var status = entries[i][0], count = entries[i][1];
+        var cls = activeFilter === status ? '' : 'outline secondary';
+        html += '<button class="' + cls + '" style="padding:2px 10px;font-size:.75rem;" onclick="activeFilter=\'' + status + '\';trialsPage=1;renderTrials();renderFilters();">' + escapeHtml(status.replace(/_/g,' ')) + ' (' + count + ')</button>';
+    }
+    container.innerHTML = html;
+}
+
+// Enter key triggers search
+document.getElementById('search-input').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { e.preventDefault(); document.getElementById('search-btn').click(); }
+});
+
+document.getElementById('search-btn').addEventListener('click', async function() {
+    var query = document.getElementById('search-input').value.trim();
+    if (!query) return;
+
+    var btn = document.getElementById('search-btn');
+    btn.setAttribute('aria-busy', 'true');
+    btn.textContent = 'Searching...';
+    btn.disabled = true;
+    document.getElementById('summary-card').style.display = 'none';
+    document.getElementById('results-area').style.display = 'none';
+
+    try {
+        var resp = await apiFetch('/api/search/', {
+            method: 'POST',
+            body: JSON.stringify({ query: query }),
+        });
+        var data = await resp.json();
+        if (resp.ok) {
+            // Summary
+            document.getElementById('summary-text').textContent = data.summary;
+            document.getElementById('rewritten-query').textContent = data.rewritten_query ? 'Searched as: "' + data.rewritten_query + '"' : '';
+            document.getElementById('summary-card').style.display = 'block';
+
+            // Sort: recruiting first, then by status
+            allTrials = (data.trials || []).sort(function(a, b) {
+                if (a.status === 'RECRUITING' && b.status !== 'RECRUITING') return -1;
+                if (b.status === 'RECRUITING' && a.status !== 'RECRUITING') return 1;
+                return 0;
+            });
+            allPapers = data.papers || [];
+
+            document.getElementById('trials-count').textContent = '(' + allTrials.length + ')';
+            document.getElementById('papers-count').textContent = '(' + allPapers.length + ')';
+
+            trialsPage = 1;
+            papersPage = 1;
+            activeFilter = 'all';
+            renderTrials();
+            renderPapers();
+            renderFilters();
+            document.getElementById('results-area').style.display = 'block';
+            loadHistory();
+        } else {
+            showAlert(data.message || 'Search failed.', 'error');
+        }
+    } catch (err) {
+        showAlert('Search failed: ' + err.message, 'error');
+    }
+    btn.setAttribute('aria-busy', 'false');
+    btn.textContent = 'Search';
+    btn.disabled = false;
+});
+
+async function loadHistory() {
+    var container = document.getElementById('history-list');
+    try {
+        var resp = await apiFetch('/api/search/history');
+        if (!resp.ok) {
+            container.innerHTML = '<p style="color:var(--pico-muted-color);">Could not load history.</p>';
+            return;
+        }
+        var data = await resp.json();
+        if (data.length === 0) {
+            container.innerHTML = '<p style="color:var(--pico-muted-color);">No searches yet. Try searching above.</p>';
+            return;
+        }
+        var html = '<table role="grid"><thead><tr><th>Query</th><th>Trials</th><th>Papers</th><th>Date</th></tr></thead><tbody>';
+        for (var i = 0; i < data.length; i++) {
+            var s = data[i];
+            var safeQuery = escapeHtml(s.query).replace(/'/g, '&#39;');
+            html += '<tr style="cursor:pointer;" onclick="document.getElementById(\'search-input\').value=\'' + safeQuery + '\';document.getElementById(\'search-btn\').click();">';
+            html += '<td style="color:var(--pico-primary);">' + escapeHtml(s.query.substring(0, 60)) + '</td>';
+            html += '<td>' + s.trials_count + '</td><td>' + s.papers_count + '</td>';
+            html += '<td>' + new Date(s.created_at).toLocaleDateString() + '</td></tr>';
+        }
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    } catch (err) {
+        container.innerHTML = '<p style="color:var(--pico-muted-color);">Error loading history.</p>';
+    }
+}
+loadHistory();
+</script>
+{% endblock %}

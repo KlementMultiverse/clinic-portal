@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Clinic Portal{% endblock %}
+
+{% block content %}
+<section>
+    <h1>Dashboard</h1>
+    <p>Welcome, {{ user.name|default:user.email }}.</p>
+</section>
+
+<section id="stats-section">
+    <div class="grid">
+        <article>
+            <header>Workflows</header>
+            <p class="stat-value" id="stat-workflows">--</p>
+        </article>
+        <article>
+            <header>Documents</header>
+            <p class="stat-value" id="stat-documents">--</p>
+        </article>
+        <article>
+            <header>Staff Members</header>
+            <p class="stat-value" id="stat-staff">--</p>
+        </article>
+    </div>
+</section>
+
+<section>
+    <h2>Tasks by Status</h2>
+    <div id="tasks-by-status" class="grid">
+        <p>Loading...</p>
+    </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(async function() {
+    const resp = await apiFetch('/api/dashboard/stats');
+    if (!resp.ok) {
+        showAlert('Failed to load dashboard stats.', 'error');
+        return;
+    }
+    const data = await resp.json();
+
+    document.getElementById('stat-workflows').textContent = data.total_workflows;
+    document.getElementById('stat-documents').textContent = data.total_documents;
+    document.getElementById('stat-staff').textContent = data.total_staff;
+
+    const container = document.getElementById('tasks-by-status');
+    container.innerHTML = '';
+    const statuses = data.tasks_by_status;
+    if (Object.keys(statuses).length === 0) {
+        container.innerHTML = '<p>No tasks yet.</p>';
+        return;
+    }
+    for (const [status, count] of Object.entries(statuses)) {
+        const card = document.createElement('article');
+        card.innerHTML = '<header><span class="badge badge-' + status + '">' +
+            status.replace('_', ' ') + '</span></header><p class="stat-value">' +
+            count + '</p>';
+        container.appendChild(card);
+    }
+})();
+</script>
+{% endblock %}
