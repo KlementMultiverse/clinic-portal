@@ -143,14 +143,8 @@ async function loadDocuments() {
             this.setAttribute('aria-busy', 'false');
             if (resp.ok) {
                 const data = await resp.json();
-                // Force download via hidden link with download attribute
-                const a = document.createElement('a');
-                a.href = data.download_url;
-                a.download = docName || 'download';
-                a.style.display = 'none';
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
+                // Open in new tab
+                window.open(data.download_url, '_blank');
             } else {
                 showAlert('Failed to get download URL.', 'error');
             }

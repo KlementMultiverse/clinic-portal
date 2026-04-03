@@ -6,7 +6,6 @@ from django.core.cache import cache
 from django.db import connection
 from django.http import HttpRequest
 from ninja import Router, Schema
-from ninja.errors import HttpError
 from ninja.security import django_auth
 
 from apps.documents.models import Document
@@ -15,6 +14,7 @@ from apps.documents.services import (
     generate_download_url,
     generate_upload_url,
 )
+from apps.permissions import require_admin as _require_admin
 from apps.users.services import track_action
 from apps.workflows.models import AuditLog
 
@@ -220,10 +220,6 @@ class MessageOut(Schema):
 # ---------------------------------------------------------------------------
 
 
-def _require_admin(request: HttpRequest) -> None:
-    """Raise 403 if user is not an admin."""
-    if request.user.role != "admin":
-        raise HttpError(403, "Only admins can perform this action.")
 
 
 # ---------------------------------------------------------------------------

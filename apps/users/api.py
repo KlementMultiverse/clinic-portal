@@ -9,6 +9,7 @@ from ninja import NinjaAPI, Router, Schema
 from ninja.errors import HttpError
 from ninja.security import django_auth
 
+from apps.permissions import require_admin
 from apps.tenants.models import Tenant
 from apps.users.models import User
 from apps.users.services import track_action
@@ -235,8 +236,7 @@ def _get_current_tenant(request: HttpRequest) -> Tenant:
 
 def _require_admin(request: HttpRequest) -> None:
     """Raise 403 if user is not an admin."""
-    if request.user.role != "admin":
-        raise HttpError(403, "Only admins can manage staff.")
+    require_admin(request, message="Only admins can manage staff.")
 
 
 @staff_router.get("/", response={200: list[UserOut]}, auth=django_auth)

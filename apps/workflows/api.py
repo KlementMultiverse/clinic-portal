@@ -4,12 +4,13 @@ from datetime import datetime
 from typing import Optional
 
 from django.core.cache import cache
+from django.db.models import Count
 from django.http import HttpRequest
 from ninja import Router, Schema
-from ninja.errors import HttpError
 from ninja.security import django_auth
 
 from apps.documents.services import get_user_context, invoke_generate_tasks_lambda
+from apps.permissions import require_admin as _require_admin
 from apps.users.models import User
 from apps.users.services import track_action
 from apps.workflows.models import AuditLog, Task, Workflow
@@ -24,6 +25,19 @@ logger = logging.getLogger(__name__)
 class WorkflowIn(Schema):
     name: str
     description: str = ""
+
+
+class WorkflowListOut(Schema):
+    """Response schema for GET /api/workflows/ per REQ-009.
+
+    Fields: id, name, description, created_at, task_count.
+    """
+
+    id: int
+    name: str
+    description: str
+    created_at: datetime
+    task_count: int
 
 
 class WorkflowOut(Schema):
@@ -95,30 +109,31 @@ class GenerateTasksOut(Schema):
 # ---------------------------------------------------------------------------
 
 
-def _require_admin(request: HttpRequest) -> None:
-    """Raise 403 if user is not an admin."""
-    if request.user.role != "admin":
-        raise HttpError(403, "Only admins can perform this action.")
-
-
 # ---------------------------------------------------------------------------
 # Workflow Router — /api/workflows/
 # ---------------------------------------------------------------------------
 workflow_router = Router(auth=django_auth, tags=["workflows"])
 
 
-@workflow_router.get("/", response={200: list[WorkflowOut]})
+@workflow_router.get("/", response={200: list[WorkflowListOut]})
 def list_workflows(request: HttpRequest):
-    """List all workflows in current tenant. Any authenticated user.
+    """List all workflows in current tenant with task counts.
+
+    Per REQ-009: Admin and staff can list workflows.
+    Response: [{id, name, description, created_at, task_count}]
+    Cached for 30 seconds per CLAUDE.md Rule #11.
+    Tenant-scoped automatically via TenantMainMiddleware (Rule #3).
 
     Error responses:
-    - 401 Unauthorized: not authenticated
+    - 401 Unauthorized: not authenticated (django_auth on router)
     """
     cached = cache.get("workflows:list")
     if cached:
-        return cached
-    workflows = Workflow.objects.all()
-    result = list(workflows)
+        return 200, cached
+    workflows = Workflow.objects.annotate(task_count=Count("tasks")).all()
+    result = list(
+        workflows.values("id", "name", "description", "created_at", "task_count")
+    )
     cache.set("workflows:list", result, 30)
     return 200, result
 

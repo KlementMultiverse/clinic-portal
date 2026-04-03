@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 
 from django.http import HttpRequest
@@ -7,7 +8,7 @@ from ninja.security import django_auth
 from tenant_users.tenants.models import ExistsError
 from tenant_users.tenants.tasks import provision_tenant
 
-from apps.tenants.models import Tenant
+from apps.tenants.models import Domain, Tenant
 from apps.users.api import MessageOut, TenantCreateIn, TenantOut
 
 RESERVED_SUBDOMAINS = {"admin", "api", "www", "public", "portal", "mail", "ftp"}
@@ -91,6 +92,13 @@ def create_tenant(request: HttpRequest, data: TenantCreateIn):
         request.user.email,
     )
 
+    # Add live domain if configured (e.g., klementgunndu.space)
+    live_domain = os.environ.get("TENANT_BASE_DOMAIN", "")
+    if live_domain:
+        live_fqdn = f"{subdomain}.{live_domain}"
+        if not Domain.objects.filter(domain=live_fqdn).exists():
+            Domain.objects.create(domain=live_fqdn, tenant=tenant, is_primary=False)
+
     # Set the user's role to admin for this tenant
     request.user.role = "admin"
     request.user.save(update_fields=["role"])
@@ -128,3 +136,41 @@ def list_tenants(request: HttpRequest):
         }
         for t in tenants
     ]
+
+
+@tenant_router.get(
+    "/my-clinics",
+    response={200: list[TenantOut]},
+    auth=django_auth,
+)
+def my_clinics(request: HttpRequest):
+    """List clinics the current user belongs to."""
+    tenants = request.user.tenants.exclude(schema_name="public")
+    return 200, [
+        {
+            "id": t.id,
+            "name": t.name,
+            "schema_name": t.schema_name,
+            "created_at": t.created_at,
+        }
+        for t in tenants
+    ]
+
+
+@tenant_router.post(
+    "/switch/{tenant_id}",
+    response={200: MessageOut, 404: MessageOut},
+    auth=django_auth,
+)
+def switch_tenant(request: HttpRequest, tenant_id: int):
+    """Switch active tenant (session-based, for single-domain deployments)."""
+    tenant = request.user.tenants.filter(pk=tenant_id).exclude(
+        schema_name="public"
+    ).first()
+    if not tenant:
+        return 404, {"message": "Clinic not found."}
+    request.session["active_tenant_id"] = tenant.id
+    logger.info(
+        "Tenant switch: user=%s → %s", request.user.email, tenant.name
+    )
+    return 200, {"message": f"Switched to {tenant.name}"}

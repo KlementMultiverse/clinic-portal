@@ -1,4 +1,5 @@
 from django.contrib import admin
+from django.utils.html import format_html
 
 from apps.users.models import User
 
@@ -8,7 +9,7 @@ class UserAdmin(admin.ModelAdmin):
     list_display = [
         "email",
         "name",
-        "role",
+        "role_badge",
         "is_active",
         "must_reset_password",
         "tenant_list",
@@ -16,7 +17,7 @@ class UserAdmin(admin.ModelAdmin):
     list_filter = ["role", "is_active", "must_reset_password"]
     search_fields = ["email", "name"]
     ordering = ["email"]
-    list_editable = ["role", "is_active"]
+    list_editable = ["is_active"]
     readonly_fields = ["last_login", "tenant_list"]
 
     fieldsets = (
@@ -26,10 +27,24 @@ class UserAdmin(admin.ModelAdmin):
         ("Info", {"fields": ("last_login", "tenant_list")}),
     )
 
+    def role_badge(self, obj):
+        colors = {"admin": "#28a745", "staff": "#007bff"}
+        color = colors.get(obj.role, "#6c757d")
+        return format_html(
+            '<span style="background:{}; color:white; padding:2px 8px; '
+            'border-radius:3px; font-size:11px;">{}</span>',
+            color,
+            obj.role.upper(),
+        )
+
+    role_badge.short_description = "Role"
+
     def tenant_list(self, obj):
         """Show which clinics this user belongs to."""
         tenants = obj.tenants.exclude(schema_name="public")
-        return ", ".join(t.name for t in tenants) if tenants else "None"
+        if not tenants:
+            return "—"
+        return ", ".join(t.name for t in tenants)
 
     tenant_list.short_description = "Clinics"
 

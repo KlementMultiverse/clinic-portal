@@ -23,7 +23,7 @@
 
                     <label for="subdomain">Subdomain</label>
                     <input type="text" id="subdomain" name="subdomain" placeholder="myclinic" required>
-                    <small>Your workspace will be at <strong><span id="subdomain-preview">myclinic</span>.localhost</strong></small>
+                    <small>Your workspace will be at <strong><span id="subdomain-preview">myclinic</span>.<span id="base-domain">localhost</span></strong></small>
 
                     <label for="signup-email">Email</label>
                     <input type="email" id="signup-email" name="email" placeholder="admin@example.com" required>
@@ -35,7 +35,7 @@
                 </form>
                 <footer>
                     <p>Already have a clinic? <a href="/login/">Go to Login</a></p>
-                    <p><small>Admin login: use your clinic's subdomain (e.g., clinic1.localhost:8000/login/)</small></p>
+                    <p><small>Admin login: use your clinic's subdomain (e.g., clinic1.<span class="base-domain-text">localhost</span>/login/)</small></p>
                 </footer>
             </article>
         </div>
@@ -60,6 +60,15 @@
 
 {% block extra_js %}
 <script>
+// Detect base domain from current hostname
+var hostParts = window.location.hostname.split('.');
+var baseDomain = hostParts.length > 2 ? hostParts.slice(1).join('.') : window.location.hostname;
+// Update domain display
+var baseDomainEl = document.getElementById('base-domain');
+if (baseDomainEl) baseDomainEl.textContent = baseDomain;
+var baseDomainTexts = document.querySelectorAll('.base-domain-text');
+baseDomainTexts.forEach(function(el) { el.textContent = baseDomain; });
+
 // Auto-populate subdomain from clinic name
 document.getElementById('clinic-name').addEventListener('input', function() {
     const slug = this.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').substring(0, 30);
@@ -105,13 +114,18 @@ document.getElementById('signup-form').addEventListener('submit', async function
         }
 
         // Step 3: Login
+        var userExisted = (resp.status === 409);
         resp = await apiFetch('/api/auth/login', {
             method: 'POST',
             body: JSON.stringify({ email: email, password: password }),
         });
         if (!resp.ok) {
-            const err = await resp.json();
-            resetBtn(err.message || 'Login failed. Check your password.');
+            if (userExisted) {
+                resetBtn('This email is already registered. Please enter the correct password for this account, or use a different email.');
+            } else {
+                const err = await resp.json();
+                resetBtn(err.message || 'Login failed.');
+            }
             return;
         }
 
@@ -128,8 +142,9 @@ document.getElementById('signup-form').addEventListener('submit', async function
 
         showAlert('Workspace created! Redirecting to ' + clinicName + '...', 'success');
         const port = window.location.port ? ':' + window.location.port : '';
+        const protocol = window.location.protocol;
         setTimeout(function() {
-            window.location.href = '//' + subdomain + '.localhost' + port + '/';
+            window.location.href = protocol + '//' + subdomain + '.' + baseDomain + port + '/';
         }, 1500);
     } catch (err) {
         resetBtn('Something went wrong: ' + err.message);

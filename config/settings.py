@@ -16,7 +16,7 @@ DEBUG = os.environ.get("DEBUG", "False").lower() == "true"
 ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "").split(",")
 if not ALLOWED_HOSTS or ALLOWED_HOSTS == [""]:
     # In dev: allow all .localhost subdomains for dynamic tenant creation
-    ALLOWED_HOSTS = [".localhost", "localhost", "127.0.0.1", ".ngrok-free.app", ".ngrok.io"]
+    ALLOWED_HOSTS = [".localhost", "localhost", "127.0.0.1", ".ngrok-free.app", ".ngrok.io", ".klementgunndu.space"]
 
 SHARED_APPS = [
     "django_tenants",
@@ -48,6 +48,7 @@ INSTALLED_APPS = list(SHARED_APPS) + [
 
 TENANT_MODEL = "tenants.Tenant"
 TENANT_DOMAIN_MODEL = "tenants.Domain"
+TENANT_BASE_DOMAIN = os.environ.get("TENANT_BASE_DOMAIN", "")
 AUTH_USER_MODEL = "users.User"
 
 AUTHENTICATION_BACKENDS = [
@@ -93,7 +94,7 @@ MIDDLEWARE = [
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "apps.users.middleware.PasswordResetMiddleware",
-    "tenant_users.tenants.middleware.TenantAccessMiddleware",
+    "apps.tenants.middleware.SafeTenantAccessMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -134,13 +135,15 @@ SESSION_CACHE_ALIAS = "default"
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = "Lax"
 SESSION_COOKIE_SECURE = not DEBUG
-SESSION_COOKIE_DOMAIN = os.environ.get("SESSION_COOKIE_DOMAIN", None)
-CSRF_COOKIE_DOMAIN = os.environ.get("CSRF_COOKIE_DOMAIN", None)
+SESSION_COOKIE_DOMAIN = None
+CSRF_COOKIE_DOMAIN = None
 CSRF_TRUSTED_ORIGINS = [
     "http://portal.localhost:8000",
     "http://clinic1.localhost:8000",
     "http://clinic2.localhost:8000",
     "http://localhost:8000",
+    "https://klementgunndu.space",
+    "https://*.klementgunndu.space",
 ]
 # Allow Railway / ngrok for live demo
 RAILWAY_PUBLIC_DOMAIN = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")

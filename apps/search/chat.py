@@ -82,8 +82,11 @@ def _classify_intent(message, has_context):
         "- follow_up: user is asking about previously shown results "
         "(e.g. 'which ones are recruiting?', 'tell me more about that', "
         "'what about side effects?')\n"
-        "- general: greeting, thanks, general question, or anything "
-        "not about searching medical databases\n\n"
+        "- general: greeting, thanks, or general clinical question\n"
+        "- off_topic: anything NOT related to medicine, healthcare, "
+        "clinical research, or this clinic system (e.g. politics, "
+        "sports, news, math, coding, economics, who is the president, "
+        "tell me a joke, write me an essay)\n\n"
         f"Has existing search context: {has_context}\n"
         f"Message: {message}\n"
         "Category:"
@@ -114,6 +117,8 @@ def _classify_intent(message, has_context):
         return "search"  # Default to search for clinical questions
 
     result = result.lower().strip()
+    if "off" in result:
+        return "off_topic"
     if "search" in result:
         return "search"
     if "follow" in result:
@@ -126,14 +131,14 @@ def _format_context(thread):
     parts = []
     if thread.trials_context:
         parts.append("=== CLINICAL TRIALS ===")
-        for t in thread.trials_context[:10]:
+        for t in thread.trials_context[:30]:
             parts.append(
                 f"- [{t.get('nct_id', '')}] {t.get('title', '')} "
                 f"(Status: {t.get('status', '')})"
             )
     if thread.papers_context:
         parts.append("\n=== RESEARCH PAPERS ===")
-        for p in thread.papers_context[:10]:
+        for p in thread.papers_context[:30]:
             parts.append(f"- [PMID: {p.get('pmid', '')}] {p.get('title', '')}")
     return "\n".join(parts)
 
@@ -171,6 +176,29 @@ def chat(user, message, thread_id=None):
         thread.id,
         message[:50],
     )
+
+    # ── Off-topic guard ──
+    if intent == "off_topic":
+        response_text = (
+            "I'm a clinical research assistant — I can only help with "
+            "medical and healthcare-related questions. I can search "
+            "clinical trials, research papers, and answer questions "
+            "about drugs, conditions, and treatments. "
+            "What clinical topic can I help you with?"
+        )
+        ChatMessage.objects.create(
+            thread=thread, role="assistant", content=response_text
+        )
+        return {
+            "thread_id": thread.id,
+            "title": thread.title,
+            "message": response_text,
+            "has_context": bool(thread.trials_context or thread.papers_context),
+            "trials_count": len(thread.trials_context or []),
+            "papers_count": len(thread.papers_context or []),
+            "trials": thread.trials_context or [],
+            "papers": thread.papers_context or [],
+        }
 
     # ── Call 2: Search if needed ──
     if intent == "search":
@@ -224,6 +252,11 @@ def chat(user, message, thread_id=None):
         f"You are a clinical research assistant helping {user_name}. "
         "You have access to clinical trials and research papers.\n\n"
         "RULES:\n"
+        "- ONLY answer questions about medicine, healthcare, clinical "
+        "research, drugs, conditions, treatments, and this clinic system\n"
+        "- If someone asks about politics, sports, news, math, coding, "
+        "economics, general knowledge, or ANY non-medical topic, politely "
+        "decline and remind them you only handle clinical questions\n"
         "- If clinical data is available below, cite sources: "
         "[NCT...] for trials, [PMID: ...] for papers\n"
         "- Be conversational but precise — 2-5 sentences for "
@@ -232,11 +265,11 @@ def chat(user, message, thread_id=None):
         "for lists\n"
         "- Remember the conversation — don't repeat yourself\n"
         "- If the user greets you, respond warmly using their "
-        "name and ask how you can help\n"
+        "name and ask how you can help with clinical research\n"
         "- If the user asks about previous/last searches, refer "
         "to their RECENT SEARCHES listed below\n"
         "- If you don't have data on something, say so and "
-        "suggest they ask a more specific question\n"
+        "suggest they ask a more specific clinical question\n"
     )
 
     if search_context:
